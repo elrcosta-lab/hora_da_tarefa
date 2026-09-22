@@ -92,6 +92,7 @@ services:
       dockerfile: Dockerfile
       args:
         NEXT_PUBLIC_API_URL: ${WEB_API_URL:-http://localhost:8000}
+        NEXT_PUBLIC_TELEGRAM_BOT: ${TELEGRAM_BOT_USERNAME:-hora_da_tarefa_bot}
     restart: unless-stopped
     depends_on:
       api:
@@ -99,6 +100,7 @@ services:
     environment:
       HOSTNAME: 0.0.0.0
       NEXT_PUBLIC_API_URL: ${WEB_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_TELEGRAM_BOT: ${TELEGRAM_BOT_USERNAME:-hora_da_tarefa_bot}
     ports:
       - "3000:3000"
     networks: [web]
