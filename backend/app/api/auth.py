@@ -37,10 +37,7 @@ class LinkIn(BaseModel):
 
 
 def _tokens(user_id: str) -> dict:
-    from app.core.config import get_settings
-
-    s = get_settings()
-    return create_tokens(user_id, s.JWT_SECRET, s.JWT_EXPIRE_MINUTES, s.REFRESH_EXPIRE_DAYS)
+    return U.issue_token_pair(user_id)
 
 
 @router.post("/register", status_code=201,
@@ -69,12 +66,10 @@ def login_view(payload: LoginIn):
 
 @router.post("/refresh", status_code=200)
 def refresh_view(payload: RefreshIn):
-    from app.core.config import get_settings
-
-    user_id = decode_token(payload.refresh_token, get_settings().JWT_SECRET, expect="refresh")
-    if user_id is None or U.get_user(user_id) is None:
-        return _err("INVALID_TOKEN", "Refresh inválido ou expirado.", 401)
-    return {"user_id": user_id, **_tokens(user_id)}
+    pair = U.rotate_refresh(payload.refresh_token)
+    if pair is None:
+        return _err("INVALID_TOKEN", "Refresh inválido, expirado ou reutilizado.", 401)
+    return pair
 
 
 @router.post("/telegram/link", status_code=201)

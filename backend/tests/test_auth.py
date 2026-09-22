@@ -92,6 +92,21 @@ def test_register_requires_lgpd_consent():
     assert stored["lgpd_consent_at"] is not None
 
 
+def test_refresh_rotation_and_reuse_revokes_family():
+    c = _client()
+    _register(c)
+    t1 = _login(c)
+    r1 = c.post("/v1/auth/refresh", json={"refresh_token": t1["refresh_token"]})
+    assert r1.status_code == 200, r1.text
+    t2 = r1.json()
+    assert t2["refresh_token"] != t1["refresh_token"]
+    # reuso do antigo → 401 e família revogada (o novo também morre)
+    r = c.post("/v1/auth/refresh", json={"refresh_token": t1["refresh_token"]})
+    assert r.status_code == 401
+    r = c.post("/v1/auth/refresh", json={"refresh_token": t2["refresh_token"]})
+    assert r.status_code == 401
+
+
 def test_cross_account_child_is_forbidden():
     c = _client()
     _register(c, name="A", email="a@teste.com")

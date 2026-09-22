@@ -24,5 +24,19 @@ class AppUser(Base):
     telegram_link_code: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     lgpd_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lgpd_consent_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class RefreshToken(Base):
+    """Família de refresh single-use (detecção de roubo por reuso)."""
+
+    __tablename__ = "refresh_token"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id: Mapped[str] = mapped_column(Text, nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    revoked: Mapped[bool] = mapped_column(default=False, nullable=False)
+    replaced_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)

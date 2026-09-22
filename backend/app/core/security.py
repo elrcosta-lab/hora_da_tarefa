@@ -26,11 +26,20 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def _encode(user_id: str, kind: str, expires: datetime, secret: str) -> str:
-    return jwt.encode({"sub": user_id, "type": kind, "exp": expires}, secret, algorithm="HS256")
+def _encode(user_id: str, kind: str, expires: datetime, secret: str, jti: str | None = None) -> str:
+    payload = {"sub": user_id, "type": kind, "exp": expires}
+    if jti:
+        payload["jti"] = jti
+    return jwt.encode(payload, secret, algorithm="HS256")
+
+
+def create_access_token(user_id: str, secret: str, access_minutes: int = 15) -> str:
+    now = datetime.now(timezone.utc)
+    return _encode(user_id, "access", now + timedelta(minutes=access_minutes), secret)
 
 
 def create_tokens(user_id: str, secret: str, access_minutes: int = 15, refresh_days: int = 7) -> dict:
+    """Legado (sem rotação). Prefira users.issue_token_pair em fluxos novos."""
     now = datetime.now(timezone.utc)
     return {
         "access_token": _encode(user_id, "access", now + timedelta(minutes=access_minutes), secret),

@@ -127,5 +127,74 @@ def link_telegram(code: str, telegram_user_id: int) -> dict | None:
 
 def clear_users() -> None:
     """Apenas testes."""
+    from app.models import RefreshToken
+
     with session_scope() as s:
+        s.query(RefreshToken).delete()
         s.query(AppUser).delete()
+
+
+def _hash_token(token: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(token.encode()).hexdigest()
+
+
+def issue_token_pair(user_id: str) -> dict:
+    """Emite access + refresh single-use (jti = linha da tabela)."""
+    import uuid as _uuid
+    from datetime import timedelta as _td
+
+    from app.core.config import get_settings
+    from app.core.security import _encode, create_access_token
+    from app.models import RefreshToken
+
+    settings = get_settings()
+    now = datetime.now(timezone.utc)
+    jti = str(_uuid.uuid4())
+    refresh = _encode(user_id, "refresh", now + _td(days=settings.REFRESH_EXPIRE_DAYS),
+                      settings.JWT_SECRET, jti=jti)
+    with session_scope() as s:
+        s.add(RefreshToken(id=jti, user_id=user_id, token_hash=_hash_token(refresh),
+                           revoked=False,
+                           expires_at=now + _td(days=settings.REFRESH_EXPIRE_DAYS)))
+        s.flush()
+    return {"access_token": create_access_token(user_id, settings.JWT_SECRET,
+                                                settings.JWT_EXPIRE_MINUTES),
+            "refresh_token": refresh, "token_type": "bearer"}
+
+
+def rotate_refresh(refresh_token: str) -> dict | None:
+    """Consome o refresh (single-use) e emite par novo. Reuso → revoga a família (roubo)."""
+    import jwt as _jwt
+
+    from app.core.config import get_settings
+    from app.models import RefreshToken
+
+    settings = get_settings()
+    try:
+        payload = _jwt.decode(refresh_token, settings.JWT_SECRET, algorithms=["HS256"])
+    except Exception:
+        return None
+    if payload.get("type") != "refresh":
+        return None
+    jti, user_id = payload.get("jti"), payload.get("sub")
+    if not jti or not user_id:
+        return None
+    with session_scope() as s:
+        row = s.get(RefreshToken, jti)
+        if row is None or row.user_id != user_id or row.token_hash != _hash_token(refresh_token):
+            return None
+        if row.revoked:
+            # reuso detectado: possível roubo — revoga tudo do usuário
+            s.query(RefreshToken).filter_by(user_id=user_id).update({"revoked": True})
+            return None
+        if row.expires_at.tzinfo is None:
+            exp = row.expires_at.replace(tzinfo=timezone.utc)
+        else:
+            exp = row.expires_at
+        if exp <= datetime.now(timezone.utc):
+            return None
+        row.revoked = True
+        s.flush()
+    return issue_token_pair(user_id)
