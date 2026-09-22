@@ -206,7 +206,10 @@ def _parse_due(due, tz):
 
 
 def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, activities=None) -> list[dict]:
-    """Calcula slots via scheduling.suggest_slots e serializa p/ API. Levanta KeyError se inexistente."""
+    """Calcula slots via scheduling.suggest_slots e serializa p/ API. Levanta KeyError se inexistente.
+
+    Se schedules/activities não forem passados, usa a rotina real da criança (RF-08).
+    """
     from datetime import datetime as _dt
     from zoneinfo import ZoneInfo
 
@@ -215,6 +218,29 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
     rec = _HOMEWORKS.get(homework_id)
     if rec is None:
         raise KeyError(homework_id)
+    if schedules is None or activities is None:
+        try:
+            from app.tasks import routine as _R
+
+            child_id = rec.get("child_id")
+            if schedules is None:
+                schedules = [
+                    {"weekday": s["weekday"], "start_time": s["start_time"],
+                     "end_time": s["end_time"], "kind": s.get("kind", "aula")}
+                    for s in _R.list_schedules(child_id)
+                ]
+            if activities is None:
+                activities = [
+                    {"weekday": a["weekday"], "start_time": a["start_time"], "end_time": a["end_time"],
+                     "travel_before_min": a.get("travel_before_min", 0),
+                     "travel_after_min": a.get("travel_after_min", 0),
+                     "is_blocking": a.get("is_blocking", True)}
+                    for a in _R.list_activities(child_id)
+                    if a.get("weekday") is not None
+                ]
+        except Exception:
+            schedules = schedules or []
+            activities = activities or []
     tz = ZoneInfo("America/Sao_Paulo")
     now = now or _dt.now(tz)
     due = _parse_due(rec.get("due_at"), tz) or (now + __import__("datetime").timedelta(days=7))
