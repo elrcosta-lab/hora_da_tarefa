@@ -127,7 +127,7 @@ flowchart LR
 | `api` | Autenticação, CRUD, upload, upload→fila, expõe `/suggestions`, webhook Telegram | Não chama IA inline (só enfileira) |
 | `worker-ai` | Anonimiza imagem (resize/strip EXIF/hash), chama OpenRouter Gemma 4, valida JSON, grava `homework` + `homework_image` | Não roda modelo local; não envia notificação |
 | `worker-default` | Recalcula sugestões, dispara notificações 24h/2h, transições de status por tempo (atrasada) | Não processa imagem |
-| `scheduler` (beat) | Aciona periodicamente: varredura de prazos, recalcular agenda, retry de jobs | - |
+| `scheduler` (beat) | `APScheduler` no lifespan da API: tick 1/min (`run_beat_tick` = `mark_overdue` + `dispatch_due` com sender Telegram quando `TELEGRAM_LIVE_SEND`) + purge de imagens 1x/dia; `BEAT_ENABLED=false` desliga | - |
 | `bot` (aiogram) | Recebe update do Telegram, valida usuário, chama API interna | Não acessa DB diretamente (usa API) |
 | `minio` | Guarda imagens originais e derivadas | - |
 | `openrouter` (externo) | Inferência multimodal imagem→JSON (`google/gemma-4-26b-a4b-it:free`) | Não guarda estado; rate limited no free |
@@ -991,7 +991,7 @@ Começa {{scheduled_start | HH:mm}}. Vai dar tempo? 💪
 
 - Respeitar `quiet_hours`: lembretes fora da janela são adiados para o início da janela.
 - `can_receive_notifications=false` no `guardian` → pula.
-- Retry: 3 tentativas com backoff 1/5/30 min; falha → `failed` + log.
+- Retry: falha por destinatário incrementa `attempts` com `error` registrado; na 3ª falha → `failed` (não tenta mais). Falha de um não derruba o tick (`run_beat_tick` em `app/tasks/beat.py`).
 
 ---
 

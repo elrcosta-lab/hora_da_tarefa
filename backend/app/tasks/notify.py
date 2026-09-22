@@ -179,14 +179,18 @@ def _recipient_chat(homework_id: str) -> int | None:
         return int(u.telegram_user_id) if u and u.telegram_user_id else None
 
 
-def dispatch_due(now: datetime | None = None, sender=None) -> list[dict]:
+def dispatch_due(now: datetime | None = None, sender=None, stats: dict | None = None) -> list[dict]:
     """Beat: envia tudo scheduled com scheduled_for <= now (uma única vez cada).
 
     sender(chat_id, text): quando fornecido e há dono vinculado, entrega via
-    Telegram antes de marcar sent. Sem sender/dono, só marca sent (modo teste).
+    Telegram antes de marcar sent. Falha por destinatário: attempts++, erro
+    registrado; na 3ª falha → status failed (não tenta mais). Falha de um não
+    derruba os demais. Sem sender/dono, só marca sent (modo teste).
+    stats (opcional): dict preenchido com {"sent": n, "errors": n}.
     """
     now = now or datetime.now(TZ)
     sent: list[dict] = []
+    errors = 0
     with session_scope() as s:
         rows = s.query(NotificationLog).filter_by(status="scheduled").all()
         due_rows = []
@@ -200,12 +204,24 @@ def dispatch_due(now: datetime | None = None, sender=None) -> list[dict]:
                 if chat is not None:
                     from app.tasks.extract import get_homework
 
-                    sender(chat, _render(rec.kind, get_homework(rec.homework_id) or {}))
+                    try:
+                        sender(chat, _render(rec.kind, get_homework(rec.homework_id) or {}))
+                    except Exception as exc:
+                        rec.attempts = (rec.attempts or 0) + 1
+                        rec.error = str(exc)[:500]
+                        if rec.attempts >= 3:
+                            rec.status = "failed"
+                        s.flush()
+                        errors += 1
+                        continue
             rec.status = "sent"
             rec.sent_at = datetime.now(TZ).replace(tzinfo=None)
             rec.attempts = (rec.attempts or 0) + 1
             s.flush()
             sent.append(_to_dict(rec))
+    if stats is not None:
+        stats["sent"] = len(sent)
+        stats["errors"] = errors
     return sent
 
 
