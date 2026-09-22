@@ -15,10 +15,51 @@ class NotFound(Exception):
     pass
 
 
+class EmailTaken(Exception):
+    pass
+
+
 def _to_dict(u: AppUser) -> dict:
-    return {"user_id": u.id, "name": u.name,
+    return {"user_id": u.id, "name": u.name, "email": u.email,
             "telegram_user_id": u.telegram_user_id,
             "link_code": u.telegram_link_code}
+
+
+def get_user(user_id: str) -> dict | None:
+    with session_scope() as s:
+        u = s.get(AppUser, user_id)
+        return _to_dict(u) if u else None
+
+
+def register(name: str, email: str, password: str) -> dict:
+    from app.core.security import hash_password
+
+    if not (name or "").strip():
+        raise ValueError("name é obrigatório")
+    email = (email or "").strip().lower()
+    if "@" not in email:
+        raise ValueError("e-mail inválido")
+    with session_scope() as s:
+        if s.query(AppUser).filter_by(email=email).one_or_none() is not None:
+            raise EmailTaken(email)
+        u = AppUser(id=str(uuid.uuid4()), name=name.strip(), email=email,
+                    password_hash=hash_password(password),
+                    telegram_link_code=_new_code(s))
+        s.add(u)
+        s.flush()
+        return _to_dict(u)
+
+
+def authenticate(email: str, password: str) -> dict | None:
+    from app.core.security import verify_password
+
+    with session_scope() as s:
+        u = s.query(AppUser).filter_by(email=(email or "").strip().lower()).one_or_none()
+        if u is None or not u.password_hash:
+            return None
+        if not verify_password(password, u.password_hash):
+            return None
+        return _to_dict(u)
 
 
 def _new_code(s, length: int = 6) -> str:

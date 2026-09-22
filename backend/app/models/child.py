@@ -22,6 +22,7 @@ class Child(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    owner_user_id: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     birth_date: Mapped[Date | None] = mapped_column(Date, nullable=True)
     grade_level: Mapped[str | None] = mapped_column(Text, nullable=True)
     school_name: Mapped[str | None] = mapped_column(Text, nullable=True)

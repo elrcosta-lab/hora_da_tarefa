@@ -1,8 +1,10 @@
-"""Router de upload + consulta + status (SPECS §3.2 §3.3 §3.4 §3.5 §4.6 v1.1)."""
-from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
+"""Router de upload + consulta + status (SPECS §3.2 §3.3 §3.4 §3.5 §4.6 v1.1) — escopo por dono."""
+from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
+from app.core.security import get_current_user_id
+from app.tasks import routine as R
 from app.tasks.extract import (
     StatusConflict,
     accept_suggestion,
@@ -10,6 +12,7 @@ from app.tasks.extract import (
     get_homework,
     get_or_create_homework,
     list_homeworks,
+    owned_by,
     run_extraction,
     transition_homework,
 )
@@ -31,6 +34,14 @@ class StatusPatch(BaseModel):
     reason: str | None = None
 
 
+def _owned_or_error(homework_id: str, owner: str):
+    if get_homework(homework_id) is None:
+        return _error("HOMEWORK_NOT_FOUND", "Tarefa não encontrada.", 404)
+    if not owned_by(homework_id, owner):
+        return _error("FORBIDDEN", "Sem acesso a esta tarefa.", 403)
+    return None
+
+
 @router.post("/upload", status_code=202)
 async def upload_homework(
     background: BackgroundTasks,
@@ -38,6 +49,7 @@ async def upload_homework(
     child_id: str = Form(...),
     hint_text: str | None = Form(default=None),
     source: str = Form(default="web"),
+    owner: str = Depends(get_current_user_id),
 ):
     data = await file.read()
     if len(data) > MAX_BYTES:
@@ -45,7 +57,12 @@ async def upload_homework(
     mime = detect_mime(data)
     if mime not in ALLOWED:
         return _error("UNSUPPORTED_MEDIA_TYPE", "Envie JPEG, PNG ou WEBP.", 415)
-    rec, dedup = get_or_create_homework(data, child_id=child_id, hint_text=hint_text)
+    if R.get_child(child_id) is None:
+        return _error("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
+    if not R.owns(child_id, owner):
+        return _error("FORBIDDEN", "Sem acesso a esta criança.", 403)
+    rec, dedup = get_or_create_homework(data, child_id=child_id, hint_text=hint_text,
+                                        created_by_user_id=owner)
     if not dedup:
         background.add_task(run_extraction, rec["homework_id"])
     body = {
@@ -61,9 +78,15 @@ async def upload_homework(
 
 
 @router.get("", status_code=200)
-def list_homeworks_view(child_id: str | None = None, page: int = 1, page_size: int = 20):
+def list_homeworks_view(child_id: str | None = None, page: int = 1, page_size: int = 20,
+                        owner: str = Depends(get_current_user_id)):
+    if child_id is not None:
+        if R.get_child(child_id) is None:
+            return _error("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
+        if not R.owns(child_id, owner):
+            return _error("FORBIDDEN", "Sem acesso a esta criança.", 403)
     page_size = max(1, min(page_size, 100))
-    items = list_homeworks(child_id=child_id)
+    items = list_homeworks(child_id=child_id, owner_user_id=owner)
     total = len(items)
     start = (page - 1) * page_size
     page_items = items[start : start + page_size]
@@ -90,10 +113,11 @@ def list_homeworks_view(child_id: str | None = None, page: int = 1, page_size: i
 
 
 @router.get("/{homework_id}", status_code=200)
-def get_homework_view(homework_id: str):
+def get_homework_view(homework_id: str, owner: str = Depends(get_current_user_id)):
+    denied = _owned_or_error(homework_id, owner)
+    if denied is not None:
+        return denied
     rec = get_homework(homework_id)
-    if rec is None:
-        return _error("HOMEWORK_NOT_FOUND", "Tarefa não encontrada.", 404)
     return {
         "id": rec["homework_id"],
         "child_id": rec["child_id"],
@@ -110,9 +134,10 @@ def get_homework_view(homework_id: str):
 
 
 @router.patch("/{homework_id}/status", status_code=200)
-def patch_homework_status(homework_id: str, payload: StatusPatch):
-    if get_homework(homework_id) is None:
-        return _error("HOMEWORK_NOT_FOUND", "Tarefa não encontrada.", 404)
+def patch_homework_status(homework_id: str, payload: StatusPatch, owner: str = Depends(get_current_user_id)):
+    denied = _owned_or_error(homework_id, owner)
+    if denied is not None:
+        return denied
     try:
         rec = transition_homework(homework_id, payload.status)
     except StatusConflict as exc:
@@ -130,9 +155,10 @@ class AcceptPayload(BaseModel):
 
 
 @router.post("/{homework_id}/accept", status_code=200)
-def accept_homework_view(homework_id: str, payload: AcceptPayload):
-    if get_homework(homework_id) is None:
-        return _error("HOMEWORK_NOT_FOUND", "Tarefa não encontrada.", 404)
+def accept_homework_view(homework_id: str, payload: AcceptPayload, owner: str = Depends(get_current_user_id)):
+    denied = _owned_or_error(homework_id, owner)
+    if denied is not None:
+        return denied
     try:
         rec = accept_suggestion(homework_id, payload.start_at)
     except StatusConflict as exc:

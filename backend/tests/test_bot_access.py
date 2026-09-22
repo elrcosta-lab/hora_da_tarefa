@@ -11,6 +11,8 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import make_auth
+
 
 @pytest.fixture(autouse=True)
 def _clean(monkeypatch):
@@ -49,9 +51,10 @@ def _upd(uid, **msg):
 
 
 def _link_code_for(client, name="Carlos"):
-    r = client.post("/v1/auth/telegram/link", json={"name": name})
-    assert r.status_code == 201, r.text
-    return r.json()
+    h, uid = make_auth(client, name=name)
+    r = client.post("/v1/auth/telegram/link", json={"user_id": uid}, headers=h)
+    assert r.status_code == 200, r.text
+    return h, r.json()
 
 
 def test_unlinked_user_gets_restricted_and_creates_nothing():
@@ -74,7 +77,7 @@ def test_link_code_flow_grants_access():
     c = _client()
     from app.bot.handlers import last_sent
 
-    data = _link_code_for(c)
+    _, data = _link_code_for(c)
     code = data["link_code"]
     # código direto no chat vincula
     r = c.post("/v1/telegram/webhook", headers=_headers(), json=_upd(110, text=code))
@@ -90,7 +93,7 @@ def test_start_with_code_links():
     c = _client()
     from app.bot.handlers import last_sent
 
-    data = _link_code_for(c)
+    _, data = _link_code_for(c)
     r = c.post("/v1/telegram/webhook", headers=_headers(), json=_upd(
         120, text=f"/start {data['link_code']}"))
     assert r.status_code == 200
@@ -101,7 +104,7 @@ def test_code_is_single_use():
     c = _client()
     from app.bot.handlers import last_sent
 
-    data = _link_code_for(c)
+    _, data = _link_code_for(c)
     code = data["link_code"]
     c.post("/v1/telegram/webhook", headers=_headers(), json=_upd(130, text=code))
     # segundo chat tentando o mesmo código não vincula
@@ -114,7 +117,7 @@ def test_code_is_single_use():
 def test_link_endpoint_regenerates_code():
     c = _client()
 
-    first = _link_code_for(c)
-    r = c.post("/v1/auth/telegram/link", json={"user_id": first["user_id"]})
+    h_owner, first = _link_code_for(c)
+    r = c.post("/v1/auth/telegram/link", json={"user_id": first["user_id"]}, headers=h_owner)
     assert r.status_code == 200
     assert r.json()["link_code"] != first["link_code"]

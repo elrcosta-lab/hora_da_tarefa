@@ -117,12 +117,18 @@ def test_dedupe_same_update_id_ignored():
 
 
 def test_concluir_command_updates_status():
-    _link(11)
+    from tests.conftest import make_auth
+
     c = _client()
-    from app.tasks import routine as R
+    h, uid = make_auth(c, name="Mae")
+    # vincula o chat 11 ao MESMO usuário dono (fluxo real: código no app)
+    code = c.post("/v1/auth/telegram/link", json={"user_id": uid}, headers=h).json()["link_code"]
+    from app.tasks import users as U
+
+    assert U.link_telegram(code, 11) is not None
     from app.tasks.extract import get_homework
 
-    cid = R.create_child("Ana")["id"]
+    cid = c.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
     # cria tarefa via foto simulada com bytes reais
     import io
     from PIL import Image
@@ -137,7 +143,7 @@ def test_concluir_command_updates_status():
                           confidence=0.9, needs_review=False, extraction_status="ok", meta={})
     with patch("app.services.vision_openrouter.extract_homework", return_value=ok):
         up = c.post("/v1/homeworks/upload", files={"file": ("t.jpg", buf.getvalue(), "image/jpeg")},
-                    data={"child_id": cid})
+                    data={"child_id": cid}, headers=h)
     hid = up.json()["homework_id"]
     r = c.post("/v1/telegram/webhook", headers=_headers(), json={
         "update_id": 40,

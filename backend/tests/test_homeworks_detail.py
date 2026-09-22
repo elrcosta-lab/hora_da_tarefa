@@ -1,12 +1,13 @@
-"""TDD RED — upload→background + GET list/detail (SPECS §3.3 §3.4 §5 v1.1)."""
+"""upload→background + GET list/detail (SPECS §3.3 §3.4 §5 v1.1) — com auth."""
 import io
-import json
 import uuid
 
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
+
+from tests.conftest import make_auth
 
 
 @pytest.fixture(autouse=True)
@@ -43,23 +44,31 @@ def _mock_success():
     )
 
 
+def _setup(client):
+    h, _ = make_auth(client)
+    a = client.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    b = client.post("/v1/children", json={"name": "Beto"}, headers=h).json()["id"]
+    return h, a, b
+
+
 def test_upload_triggers_background_extraction():
     from app.main import app
 
     client = TestClient(app)
-    child_id = str(uuid.uuid4())
+    h, child_a, _ = _setup(client)
     with patch(
         "app.services.vision_openrouter.extract_homework", return_value=_mock_success()
     ):
         resp = client.post(
             "/v1/homeworks/upload",
             files={"file": ("tarefa.jpg", _img_bytes(), "image/jpeg")},
-            data={"child_id": child_id},
+            data={"child_id": child_a},
+            headers=h,
         )
         assert resp.status_code == 202
         hid = resp.json()["homework_id"]
 
-        detail = client.get(f"/v1/homeworks/{hid}")
+        detail = client.get(f"/v1/homeworks/{hid}", headers=h)
         assert detail.status_code == 200, detail.text
         body = detail.json()
         assert body["subject"] == "Matemática"
@@ -71,7 +80,8 @@ def test_get_homework_detail_404():
     from app.main import app
 
     client = TestClient(app)
-    resp = client.get(f"/v1/homeworks/{uuid.uuid4()}")
+    h, _, _ = _setup(client)
+    resp = client.get(f"/v1/homeworks/{uuid.uuid4()}", headers=h)
     assert resp.status_code == 404
     assert resp.json()["error"]["code"] == "HOMEWORK_NOT_FOUND"
 
@@ -80,8 +90,7 @@ def test_list_homeworks_filters_by_child():
     from app.main import app
 
     client = TestClient(app)
-    child_a = str(uuid.uuid4())
-    child_b = str(uuid.uuid4())
+    h, child_a, child_b = _setup(client)
     with patch(
         "app.services.vision_openrouter.extract_homework", return_value=_mock_success()
     ):
@@ -90,13 +99,15 @@ def test_list_homeworks_filters_by_child():
                 "/v1/homeworks/upload",
                 files={"file": (f"{uuid.uuid4()}.jpg", _img_bytes(size=(800 + i, 600), color=(200 + i, 220, 255)), "image/jpeg")},
                 data={"child_id": child_a},
+                headers=h,
             )
         client.post(
             "/v1/homeworks/upload",
             files={"file": (f"{uuid.uuid4()}.jpg", _img_bytes(size=(900, 600), color=(10, 20, 30)), "image/jpeg")},
             data={"child_id": child_b},
+            headers=h,
         )
-    resp = client.get("/v1/homeworks", params={"child_id": child_a})
+    resp = client.get("/v1/homeworks", params={"child_id": child_a}, headers=h)
     assert resp.status_code == 200
     body = resp.json()
     assert body["total"] == 2

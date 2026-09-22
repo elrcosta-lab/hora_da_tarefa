@@ -96,12 +96,32 @@ def get_homework(homework_id: str) -> dict | None:
         return _to_dict(hw) if hw else None
 
 
-def list_homeworks(child_id: str | None = None) -> list[dict]:
+def list_homeworks(child_id: str | None = None, owner_user_id: str | None = None) -> list[dict]:
+    from app.models import Child
+
     with session_scope() as s:
         q = s.query(Homework).order_by(Homework.created_at)
         if child_id:
             q = q.filter_by(child_id=child_id)
+        if owner_user_id is not None:
+            q = q.join(Child, Child.id == Homework.child_id).filter(Child.owner_user_id == owner_user_id)
         return [_to_dict(hw) for hw in q.all()]
+
+
+def homework_owner_id(homework_id: str) -> str | None:
+    """Dono da tarefa via criança. None se tarefa/criança inexistente."""
+    from app.models import Child
+
+    with session_scope() as s:
+        hw = s.get(Homework, homework_id)
+        if hw is None:
+            return None
+        c = s.get(Child, hw.child_id)
+        return c.owner_user_id if c else None
+
+
+def owned_by(homework_id: str, owner_user_id: str) -> bool:
+    return homework_owner_id(homework_id) == owner_user_id
 
 
 def _parse_result_due(due_str: str | None):

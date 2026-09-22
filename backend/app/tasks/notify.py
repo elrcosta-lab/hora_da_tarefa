@@ -225,13 +225,19 @@ def dispatch_due(now: datetime | None = None, sender=None, stats: dict | None = 
     return sent
 
 
-def list_notifications(homework_id: str | None = None, child_id: str | None = None) -> list[dict]:
+def list_notifications(homework_id: str | None = None, child_id: str | None = None,
+                       owner_user_id: str | None = None) -> list[dict]:
+    from app.models import Child
+
     with session_scope() as s:
         q = s.query(NotificationLog)
         if homework_id:
             q = q.filter_by(homework_id=homework_id)
         if child_id:
             q = q.filter_by(child_id=child_id)
+        if owner_user_id is not None and homework_id is None and child_id is None:
+            q = q.join(Child, Child.id == NotificationLog.child_id).filter(
+                Child.owner_user_id == owner_user_id)
         items = [_to_dict(r) for r in q.all()]
     return sorted(items, key=lambda r: (r["scheduled_for"], r["kind"]))
 

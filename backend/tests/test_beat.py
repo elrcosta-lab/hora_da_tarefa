@@ -14,6 +14,9 @@ from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+from unittest.mock import patch
+
+from tests.conftest import make_auth
 
 TZ = ZoneInfo("America/Sao_Paulo")
 
@@ -56,7 +59,8 @@ def _make_overdue_homework(client, user_id, due="2020-01-01"):
     from app.schemas.extraction import ExtractionResult
 
     c = client
-    cid = c.post("/v1/children", json={"name": "Ana"}).json()["id"]
+    h, _ = make_auth(c, name="Beat")
+    cid = c.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
     ok = ExtractionResult(is_homework=True, subject="Mat", title="T", statement="S",
                           due_at=due, estimated_minutes=30, priority=1,
                           confidence=0.9, needs_review=False, extraction_status="ok", meta={})

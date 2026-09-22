@@ -42,9 +42,12 @@ def test_upload_persists_bytes_outside_process_memory(tmp_path, monkeypatch):
     from app.main import app
     from app.schemas.extraction import ExtractionResult
     from app.tasks import extract as E
+    from tests.conftest import make_auth
 
     client = TestClient(app)
     assert not hasattr(E, "_IMAGES"), "cache _IMAGES em memória deve ter sido removido"
+    h, _ = make_auth(client)
+    cid = client.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
 
     import io
     import uuid
@@ -59,7 +62,7 @@ def test_upload_persists_bytes_outside_process_memory(tmp_path, monkeypatch):
     with patch("app.services.vision_openrouter.extract_homework", return_value=ok) as m:
         r = client.post("/v1/homeworks/upload",
                         files={"file": (f"{uuid.uuid4()}.jpg", buf.getvalue(), "image/jpeg")},
-                        data={"child_id": str(uuid.uuid4())})
+                        data={"child_id": cid}, headers=h)
         assert r.status_code == 202
         # background do TestClient já rodou a extração via storage
         assert m.call_count == 1

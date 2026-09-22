@@ -1251,7 +1251,8 @@ Funcionalidade: Upload de foto da tarefa
 
 ### 10.5 AuthN/AuthZ
 
-- JWT curto (15 min) + refresh (7 dias, rotacionável).
+- JWT curto (15 min) + refresh (7 dias, rotacionável). `POST /v1/auth/register` (409 `EMAIL_TAKEN`), `/login` (401), `/refresh` (401). Senhas em Argon2id (RNF-06).
+- **Escopo por dono (ativo):** `child.owner_user_id` + `homework.created_by_user_id`; todas as rotas exigem Bearer (401 sem) e conta cruzada recebe 403 `FORBIDDEN` (CA-05). Migração `0004`.
 - Checagem de posse **no servidor** em toda rota de recurso (`guardian` ↔ `child`); previne IDOR.
 - Bot→API via `X-Bot-Token` (rotável) e validação de `telegram_user_id`.
 - Webhook Telegram valida `X-Telegram-Bot-Api-Secret-Token`.

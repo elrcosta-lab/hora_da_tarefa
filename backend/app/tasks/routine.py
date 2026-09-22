@@ -51,7 +51,7 @@ def _child_to_dict(c: Child) -> dict:
     return {"id": c.id, "name": c.name, "grade_level": c.grade_level,
             "school_name": c.school_name,
             "birth_date": c.birth_date.isoformat() if c.birth_date else None,
-            "timezone": c.timezone}
+            "timezone": c.timezone, "owner_user_id": c.owner_user_id}
 
 
 def _schedule_to_dict(s: SchoolSchedule) -> dict:
@@ -67,20 +67,32 @@ def _activity_to_dict(a: Activity) -> dict:
             "is_blocking": a.is_blocking, "location": a.location}
 
 
-def create_child(name: str, grade_level=None, school_name=None, birth_date=None, timezone="America/Sao_Paulo") -> dict:
+def create_child(name: str, grade_level=None, school_name=None, birth_date=None,
+                 timezone="America/Sao_Paulo", owner_user_id: str | None = None) -> dict:
     if not (name or "").strip():
         raise Validation("name é obrigatório")
     with session_scope() as s:
         rec = Child(id=str(uuid.uuid4()), name=name.strip(), grade_level=grade_level,
-                    school_name=school_name, birth_date=birth_date, timezone=timezone or "America/Sao_Paulo")
+                    school_name=school_name, birth_date=birth_date,
+                    timezone=timezone or "America/Sao_Paulo", owner_user_id=owner_user_id)
         s.add(rec)
         s.flush()
         return _child_to_dict(rec)
 
 
-def list_children() -> list[dict]:
+def list_children(owner_user_id: str | None = None) -> list[dict]:
     with session_scope() as s:
-        return [_child_to_dict(c) for c in s.query(Child).order_by(Child.created_at).all()]
+        q = s.query(Child).order_by(Child.created_at)
+        if owner_user_id is not None:
+            q = q.filter_by(owner_user_id=owner_user_id)
+        return [_child_to_dict(c) for c in q.all()]
+
+
+def owns(child_id: str, owner_user_id: str) -> bool:
+    """True se a criança existe e pertence ao dono (CA-05)."""
+    with session_scope() as s:
+        c = s.get(Child, child_id)
+        return c is not None and c.owner_user_id == owner_user_id
 
 
 def get_child(child_id: str) -> dict | None:

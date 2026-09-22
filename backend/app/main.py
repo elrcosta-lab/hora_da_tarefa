@@ -9,6 +9,8 @@ from app.api.homeworks import router as homeworks_router
 from app.api.notifications import router as notifications_router
 from app.api.suggestions import router as suggestions_router
 from app.api.telegram import router as telegram_router
+from app.core.security import Unauthorized
+from fastapi.responses import JSONResponse
 
 
 @asynccontextmanager
@@ -26,6 +28,13 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Hora da Tarefa", version="1.1.0", lifespan=lifespan)
+
+
+@app.exception_handler(Unauthorized)
+async def _unauthorized_handler(request, exc: Unauthorized):
+    return JSONResponse(status_code=401, content={
+        "error": {"code": "UNAUTHORIZED", "message": str(exc) or "Não autenticado.", "details": {}}})
+
 app.include_router(auth_router)
 app.include_router(children_router)
 app.include_router(homeworks_router)

@@ -13,6 +13,8 @@ from PIL import Image
 import io
 from unittest.mock import patch
 
+from tests.conftest import make_auth
+
 TZ = ZoneInfo("America/Sao_Paulo")
 
 
@@ -37,7 +39,7 @@ def _client():
     return TestClient(app)
 
 
-def _upload_with_due(client, child_id, due="2026-09-25", minutes=40):
+def _upload_with_due(client, headers, child_id, due="2026-09-25", minutes=40):
     from app.schemas.extraction import ExtractionResult
 
     ok = ExtractionResult(is_homework=True, subject="Mat", title="T", statement="S",
@@ -49,16 +51,23 @@ def _upload_with_due(client, child_id, due="2026-09-25", minutes=40):
     with patch("app.services.vision_openrouter.extract_homework", return_value=ok):
         r = client.post("/v1/homeworks/upload",
                         files={"file": (f"{uuid.uuid4()}.jpg", buf.getvalue(), "image/jpeg")},
-                        data={"child_id": child_id})
+                        data={"child_id": child_id}, headers=headers)
+    assert r.status_code == 202, r.text
     return r.json()["homework_id"]
+
+
+def _setup(client):
+    h, _ = make_auth(client)
+    cid = client.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    return h, cid
 
 
 def test_schedule_creates_24h_and_2h():
     from app.tasks import notify as N
 
     c = _client()
-    cid = c.post("/v1/children", json={"name": "Ana"}).json()["id"]
-    hid = _upload_with_due(c, cid, due="2026-09-25")
+    h, cid = _setup(c)
+    hid = _upload_with_due(c, h, cid, due="2026-09-25")
     recs = N.list_notifications(homework_id=hid)
     kinds = {r["kind"] for r in recs}
     assert {"lembrete_24h", "lembrete_2h"} <= kinds
@@ -71,8 +80,8 @@ def test_dispatch_sends_once_even_if_run_twice():
     from app.tasks import notify as N
 
     c = _client()
-    cid = c.post("/v1/children", json={"name": "Ana"}).json()["id"]
-    hid = _upload_with_due(c, cid, due="2026-09-25")
+    h, cid = _setup(c)
+    hid = _upload_with_due(c, h, cid, due="2026-09-25")
     # força vencimento: tudo devido agora
     sent1 = N.dispatch_due(now=datetime(2026, 9, 26, 12, 0, tzinfo=TZ))
     sent2 = N.dispatch_due(now=datetime(2026, 9, 26, 12, 0, tzinfo=TZ))
@@ -89,10 +98,10 @@ def test_quiet_hours_pushes_to_0700():
     from app.tasks import notify as N
 
     c = _client()
-    cid = c.post("/v1/children", json={"name": "Ana"}).json()["id"]
+    h, cid = _setup(c)
     # due 2026-09-25 23:59 → 2h antes = 21:59 (dentro da janela, ok);
     # due 2026-09-26 01:00 → 2h antes = 23:00 (quiet) → deve ir p/ 07:00 do dia 26
-    hid = _upload_with_due(c, cid, due="2026-09-26")
+    hid = _upload_with_due(c, h, cid, due="2026-09-26")
     from app.tasks.extract import update_homework_fields
 
     update_homework_fields(hid, due_at="2026-09-26T01:00:00-03:00")
@@ -107,11 +116,11 @@ def test_atraso_scheduled_when_overdue_and_list_endpoint():
     from app.tasks import notify as N
 
     c = _client()
-    cid = c.post("/v1/children", json={"name": "Ana"}).json()["id"]
-    hid = _upload_with_due(c, cid, due="2020-01-01")
+    h, cid = _setup(c)
+    hid = _upload_with_due(c, h, cid, due="2020-01-01")
     N.schedule_for_homework(hid)
     kinds = {r["kind"] for r in N.list_notifications(homework_id=hid)}
     assert "atraso" in kinds
-    r = c.get("/v1/notifications", params={"homework_id": hid})
+    r = c.get("/v1/notifications", params={"homework_id": hid}, headers=h)
     assert r.status_code == 200
     assert r.json()["total"] >= 1

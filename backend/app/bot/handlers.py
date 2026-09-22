@@ -45,13 +45,13 @@ def _link_code(chat_id: int) -> str:
     return f"{int(h[:8], 16) % 900000 + 100000}"
 
 
-def _ensure_child():
+def _ensure_child(owner_user_id: str | None = None):
     from app.tasks import routine as R
 
-    kids = R.list_children()
+    kids = R.list_children(owner_user_id=owner_user_id) if owner_user_id else R.list_children()
     if kids:
         return kids[0]
-    return R.create_child("Filho")
+    return R.create_child("Filho", owner_user_id=owner_user_id)
 
 
 def _extract_photo_bytes(message: dict, token: str | None = None) -> bytes:
@@ -71,13 +71,13 @@ def _extract_photo_bytes(message: dict, token: str | None = None) -> bytes:
     return _tg.download_photo(token or "", photos)
 
 
-def _find_homework(prefix: str):
+def _find_homework(prefix: str, owner_user_id: str | None = None):
     from app.tasks.extract import list_homeworks
 
     prefix = (prefix or "").strip()
     if not prefix:
         return None
-    for r in list_homeworks():
+    for r in list_homeworks(owner_user_id=owner_user_id):
         if r["homework_id"].startswith(prefix):
             return r
     return None
@@ -158,10 +158,14 @@ def handle_update(update: dict) -> dict:
     if cb:
         chat_id = (cb.get("message") or {}).get("chat", {}).get("id") or cb.get("from", {}).get("id")
         cb_user = (cb.get("from") or {}).get("id")
-        if cb_user is None or _resolve_user(cb_user) is None:
+        owner_cb = (_resolve_user(cb_user) or {}).get("user_id") if cb_user is not None else None
+        if owner_cb is None:
             _send(chat_id, RESTRICTED_MSG)
             return {"ok": True, "restricted": True}
         data = cb.get("data", "")
+        if data.startswith("concluir:"):
+            hid = data.split(":", 1)[1]
+            target = _find_homework(hid, owner_cb)
         if data.startswith("concluir:"):
             hid = data.split(":", 1)[1]
             target = _find_homework(hid) or ({"homework_id": hid} if len(hid) >= 32 else None)
@@ -174,7 +178,7 @@ def handle_update(update: dict) -> dict:
             from app.tasks.extract import transition_homework
 
             hid = data.split(":", 1)[1]
-            target = _find_homework(hid)
+            target = _find_homework(hid, owner_cb)
             if target:
                 for nxt in ("cancelada", "arquivada"):
                     try:
@@ -232,7 +236,7 @@ def handle_update(update: dict) -> dict:
             _send(chat_id, "Não consegui baixar a foto. Tente enviar novamente. 📷")
             return {"ok": True, "download_failed": True}
         user = _resolve_user(telegram_user_id)
-        child = _ensure_child()
+        child = _ensure_child((user or {}).get("user_id"))
         rec, dedup = get_or_create_homework(
             image_bytes, child_id=child["id"], hint_text=message.get("caption"),
             created_by_user_id=(user or {}).get("user_id"),
@@ -252,14 +256,17 @@ def handle_update(update: dict) -> dict:
     if text.startswith("/criancas"):
         from app.tasks import routine as R
 
-        kids = R.list_children()
+        owner = (_resolve_user(telegram_user_id) or {}).get("user_id")
+        kids = R.list_children(owner_user_id=owner)
         if not kids:
             _send(chat_id, "Nenhuma criança cadastrada. Use o app web para cadastrar.")
         else:
             _send(chat_id, "Crianças:\n" + "\n".join(f"• {k['name']} ({k['id'][:8]})" for k in kids))
         return {"ok": True}
     if text.startswith("/tarefas") or text.startswith("/pendentes"):
-        actives = [r for r in list_homeworks() if r.get("status") in ("pendente", "agendada", "em_andamento", "atrasada")]
+        owner = (_resolve_user(telegram_user_id) or {}).get("user_id")
+        actives = [r for r in list_homeworks(owner_user_id=owner)
+                   if r.get("status") in ("pendente", "agendada", "em_andamento", "atrasada")]
         if not actives:
             _send(chat_id, "Nenhuma tarefa ativa. 🎉")
         else:
@@ -267,7 +274,9 @@ def handle_update(update: dict) -> dict:
             _send(chat_id, "Tarefas ativas:\n" + "\n".join(lines))
         return {"ok": True}
     if text.startswith("/hoje"):
-        actives = [r for r in list_homeworks() if r.get("status") in ("pendente", "agendada", "em_andamento")]
+        owner = (_resolve_user(telegram_user_id) or {}).get("user_id")
+        actives = [r for r in list_homeworks(owner_user_id=owner)
+                   if r.get("status") in ("pendente", "agendada", "em_andamento")]
         if not actives:
             _send(chat_id, "Hoje está livre. Nenhuma tarefa agendada. 🎉")
         else:
@@ -276,7 +285,8 @@ def handle_update(update: dict) -> dict:
         return {"ok": True}
     if text.startswith("/concluir"):
         parts = text.split()
-        target = _find_homework(parts[1] if len(parts) > 1 else "")
+        owner = (_resolve_user(telegram_user_id) or {}).get("user_id")
+        target = _find_homework(parts[1] if len(parts) > 1 else "", owner)
         if target and _force_conclude(target["homework_id"]):
             _send(chat_id, "Tudo certo! Tarefa concluída. 🎉")
         else:
