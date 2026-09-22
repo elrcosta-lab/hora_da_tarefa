@@ -26,7 +26,7 @@ class Settings(BaseSettings):
     TELEGRAM_LIVE_SEND: bool = False
     RUN_MODE: str = "polling"
 
-    JWT_SECRET: str = "change-me-min-32-chars"
+    JWT_SECRET: str  # sem default de propósito: falhar fechado sem segredo explícito
     JWT_EXPIRE_MINUTES: int = 15
     REFRESH_EXPIRE_DAYS: int = 7
 

@@ -62,6 +62,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://hora:${POSTGRES_PASSWORD:-hora}@postgres:5432/hora_da_tarefa
       REDIS_URL: redis://redis:6379/0
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET ausente no .env}
       STORAGE_BACKEND: s3
       S3_ENDPOINT: http://minio:9000
       S3_BUCKET: ${S3_BUCKET:-hora-tarefa-images}
