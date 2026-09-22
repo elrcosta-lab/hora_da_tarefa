@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     AI_MAX_IMAGE_SIDE: int = 1600
     AI_JPEG_QUALITY: int = 82
 
+    TELEGRAM_BOT_TOKEN: str = "change-me"
+    TELEGRAM_WEBHOOK_SECRET: str = "change-me"
+    RUN_MODE: str = "polling"
+
 
 def get_settings() -> Settings:
     return Settings()
