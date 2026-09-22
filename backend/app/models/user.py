@@ -24,6 +24,9 @@ class AppUser(Base):
     telegram_link_code: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
     lgpd_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lgpd_consent_version: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow,
+                                                 onupdate=_utcnow)
 
 
 class RefreshToken(Base):
