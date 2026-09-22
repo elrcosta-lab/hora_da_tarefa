@@ -167,6 +167,7 @@ def get_homework_view(homework_id: str, owner: str = Depends(get_current_user_id
         "due_at": rec.get("due_at"),
         "status": rec.get("status"),
         "extraction_status": rec.get("extraction_status"),
+        "needs_review": rec.get("needs_review"),
         "extraction_confidence": rec.get("confidence"),
         "estimated_minutes": rec.get("estimated_minutes"),
         "priority": rec.get("priority", 1),
@@ -192,6 +193,42 @@ def patch_homework_status(homework_id: str, payload: StatusPatch, owner: str = D
 
 class AcceptPayload(BaseModel):
     start_at: str
+
+
+class EditPayload(BaseModel):
+    subject: str | None = None
+    title: str | None = None
+    statement: str | None = None
+    due_at: str | None = None
+    estimated_minutes: int | None = None
+    priority: int | None = None
+
+
+@router.patch("/{homework_id}", status_code=200)
+def edit_homework_view(homework_id: str, payload: EditPayload, owner: str = Depends(get_current_user_id)):
+    from app.tasks.extract import update_homework_fields
+
+    denied = _owned_or_error(homework_id, owner)
+    if denied is not None:
+        return denied
+    fields = {k: v for k, v in payload.model_dump().items() if v is not None}
+    if not fields:
+        return _error("VALIDATION_ERROR", "Nada para atualizar.", 400)
+    try:
+        rec = update_homework_fields(homework_id, **fields)
+    except ValueError as exc:
+        return _error("VALIDATION_ERROR", str(exc), 400)
+    return {
+        "id": rec["homework_id"],
+        "subject": rec.get("subject"),
+        "title": rec.get("title"),
+        "statement": rec.get("statement"),
+        "due_at": rec.get("due_at"),
+        "estimated_minutes": rec.get("estimated_minutes"),
+        "priority": rec.get("priority", 1),
+        "extraction_status": rec.get("extraction_status"),
+        "needs_review": rec.get("needs_review"),
+    }
 
 
 @router.post("/{homework_id}/accept", status_code=200)

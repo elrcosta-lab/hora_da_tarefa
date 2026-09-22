@@ -48,6 +48,16 @@ export default function DashboardPage() {
   const [file, setFile] = useState<File | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // revisão RF-06
+  const [reviewId, setReviewId] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+  const [rSubject, setRSubject] = useState("");
+  const [rTitle, setRTitle] = useState("");
+  const [rStatement, setRStatement] = useState("");
+  const [rDue, setRDue] = useState("");
+  const [rMinutes, setRMinutes] = useState("40");
+  const [rPriority, setRPriority] = useState("1");
+  const [rSugs, setRSugs] = useState<{ rank: number; start_at: string; end_at: string; score: number; reason: string }[]>([]);
 
   useEffect(() => {
     if (!getAccess()) router.push("/login");
@@ -87,16 +97,87 @@ export default function DashboardPage() {
     }
     setBusy(true);
     setMsg(null);
+    setRSugs([]);
     try {
       const form = new FormData();
       form.append("file", file);
       form.append("child_id", childId);
-      await api("/homeworks/upload", { method: "POST", body: form });
-      setMsg("Recebida! Processando extração… atualize em alguns segundos.");
+      const up = await api<{ homework_id: string }>("/homeworks/upload", { method: "POST", body: form });
       setFile(null);
+      setReviewId(up.homework_id);
+      setReviewing(true);
+      // polling da extração (RF-06): até sair de "processando"
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        const d = await api<{
+          subject?: string | null; title?: string | null; statement?: string | null;
+          due_at?: string | null; estimated_minutes?: number | null; priority?: number;
+          extraction_status: string;
+        }>(`/homeworks/${up.homework_id}`);
+        if (d.extraction_status !== "processando") {
+          setRSubject(d.subject || "");
+          setRTitle(d.title || "");
+          setRStatement(d.statement || "");
+          setRDue(d.due_at ? d.due_at.slice(0, 10) : "");
+          setRMinutes(String(d.estimated_minutes || 40));
+          setRPriority(String(d.priority ?? 1));
+          setMsg(
+            d.extraction_status === "ok"
+              ? "Confira os dados extraídos e confirme. ✅"
+              : "A IA ficou em dúvida — revise os campos abaixo. 🔍"
+          );
+          break;
+        }
+      }
       await load(childId);
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Falha no envio.");
+    } finally {
+      setBusy(false);
+      setReviewing(false);
+    }
+  }
+
+  async function saveReview(e: React.FormEvent) {
+    e.preventDefault();
+    if (!reviewId) return;
+    setBusy(true);
+    try {
+      await api(`/homeworks/${reviewId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          subject: rSubject || null,
+          title: rTitle || null,
+          statement: rStatement || null,
+          due_at: rDue || null,
+          estimated_minutes: Number(rMinutes) || null,
+          priority: Number(rPriority),
+        }),
+      });
+      const s = await api<{ suggestions: { rank: number; start_at: string; end_at: string; score: number; reason: string }[] }>(
+        `/suggestions?homework_id=${reviewId}&limit=3`
+      );
+      setRSugs(s.suggestions);
+      setMsg("Revisão salva. Escolha o melhor horário. 🗓");
+      await load(childId);
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Falha ao salvar revisão.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function acceptReview(start_at: string) {
+    if (!reviewId) return;
+    setBusy(true);
+    try {
+      await api(`/homeworks/${reviewId}/accept`, { method: "POST", body: JSON.stringify({ start_at }) });
+      setMsg("Tarefa agendada! ✅");
+      setReviewId(null);
+      setRSugs([]);
+      await load(childId);
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Falha ao agendar.");
     } finally {
       setBusy(false);
     }
@@ -153,6 +234,67 @@ export default function DashboardPage() {
           </form>
         </div>
         {msg && <p className="muted" role="status">{msg}</p>}
+
+        {(reviewing || reviewId) && (
+          <div className="card" style={{ marginBottom: 16 }} aria-label="Revisão da extração">
+            <h2>Revisar extração {reviewing && !reviewId ? "" : ""}</h2>
+            {reviewing && rTitle === "" && rSubject === "" && (
+              <p className="muted" role="status">Analisando a foto… ⏳</p>
+            )}
+            {reviewId && !reviewing && (
+              <form onSubmit={saveReview}>
+                <p className="muted">Preenchido automaticamente — revise e confirme.</p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <div style={{ flex: "1 1 160px" }}>
+                    <label htmlFor="r-subject">Matéria</label>
+                    <input id="r-subject" type="text" value={rSubject} onChange={(e) => setRSubject(e.target.value)} style={{ width: "100%" }} />
+                  </div>
+                  <div style={{ flex: "2 1 220px" }}>
+                    <label htmlFor="r-title">Título</label>
+                    <input id="r-title" type="text" value={rTitle} onChange={(e) => setRTitle(e.target.value)} style={{ width: "100%" }} />
+                  </div>
+                  <div style={{ flex: "1 1 140px" }}>
+                    <label htmlFor="r-due">Entrega (AAAA-MM-DD)</label>
+                    <input id="r-due" type="text" value={rDue} onChange={(e) => setRDue(e.target.value)} style={{ width: "100%" }} />
+                  </div>
+                  <div style={{ flex: "0 1 90px" }}>
+                    <label htmlFor="r-min">Min</label>
+                    <input id="r-min" type="text" inputMode="numeric" value={rMinutes} onChange={(e) => setRMinutes(e.target.value)} style={{ width: "100%" }} />
+                  </div>
+                  <div style={{ flex: "0 1 110px" }}>
+                    <label htmlFor="r-prio">Prioridade</label>
+                    <select id="r-prio" value={rPriority} onChange={(e) => setRPriority(e.target.value)} style={{ width: "100%" }}>
+                      <option value="0">Baixa</option>
+                      <option value="1">Normal</option>
+                      <option value="2">Alta</option>
+                    </select>
+                  </div>
+                </div>
+                <label htmlFor="r-statement">Enunciado</label>
+                <textarea id="r-statement" rows={2} value={rStatement} onChange={(e) => setRStatement(e.target.value)} style={{ width: "100%" }} />
+                <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+                  <button className="btn-primary" disabled={busy}>Salvar revisão</button>
+                  <button type="button" className="btn-secondary" onClick={() => { setReviewId(null); setRSugs([]); }}>Depois</button>
+                </div>
+              </form>
+            )}
+            {rSugs.length > 0 && (
+              <>
+                <h3>Melhores horários</h3>
+                {rSugs.map((s) => (
+                  <div className="task" key={s.rank}>
+                    <div className="row">
+                      <strong>#{s.rank} {new Date(s.start_at).toLocaleString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</strong>
+                      <span className="muted">score {s.score}</span>
+                      <button className="btn-primary" disabled={busy} onClick={() => acceptReview(s.start_at)}>Agendar</button>
+                    </div>
+                    <div className="meta">{s.reason}</div>
+                  </div>
+                ))}
+              </>
+            )}
+          </div>
+        )}
 
         <div className="grid-kpi">
           <div className="card kpi warn"><div className="value">{kpis.pendentes}</div><div className="label">Pendentes</div></div>

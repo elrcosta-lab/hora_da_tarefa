@@ -33,6 +33,12 @@ export default function TarefasPage() {
   const [sugs, setSugs] = useState<Suggestion[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [eSubject, setESubject] = useState("");
+  const [eTitle, setETitle] = useState("");
+  const [eStatement, setEStatement] = useState("");
+  const [eDue, setEDue] = useState("");
+  const [eMinutes, setEMinutes] = useState("");
 
   useEffect(() => {
     if (!getAccess()) router.push("/login");
@@ -59,11 +65,42 @@ export default function TarefasPage() {
   async function openDetail(id: string) {
     const d = await api<Detail>(`/homeworks/${id}`);
     setDetail(d);
+    setEditing(false);
+    setESubject(d.subject || "");
+    setETitle(d.title || "");
+    setEStatement(d.statement || "");
+    setEDue(d.due_at ? d.due_at.slice(0, 10) : "");
+    setEMinutes(d.estimated_minutes ? String(d.estimated_minutes) : "");
     try {
       const s = await api<{ suggestions: Suggestion[] }>(`/suggestions?homework_id=${id}&limit=5`);
       setSugs(s.suggestions);
     } catch {
       setSugs([]);
+    }
+  }
+
+  async function saveEdit() {
+    if (!detail) return;
+    setBusy(true);
+    try {
+      await api(`/homeworks/${detail.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          subject: eSubject || null,
+          title: eTitle || null,
+          statement: eStatement || null,
+          due_at: eDue || null,
+          estimated_minutes: eMinutes ? Number(eMinutes) : null,
+        }),
+      });
+      setEditing(false);
+      await openDetail(detail.id);
+      await load();
+      setMsg("Revisão salva! ✅");
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Falha ao salvar.");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -186,7 +223,20 @@ export default function TarefasPage() {
               <button className="btn-secondary" onClick={() => setDetail(null)}>Fechar</button>
             </div>
             <p><strong>Matéria:</strong> {detail.subject || "—"} · <strong>Status:</strong> {detail.status} · <strong>Entrega:</strong> {fmt(detail.due_at)}</p>
-            {detail.statement && <p>{detail.statement}</p>}
+            {detail.statement && !editing && <p>{detail.statement}</p>}
+            {!editing ? (
+              <button className="btn-secondary" onClick={() => setEditing(true)}>Revisar dados</button>
+            ) : (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+                <input type="text" aria-label="Matéria" value={eSubject} onChange={(e) => setESubject(e.target.value)} style={{ width: 140 }} />
+                <input type="text" aria-label="Título" value={eTitle} onChange={(e) => setETitle(e.target.value)} style={{ flex: "2 1 180px" }} />
+                <input type="text" aria-label="Entrega AAAA-MM-DD" value={eDue} onChange={(e) => setEDue(e.target.value)} style={{ width: 130 }} />
+                <input type="text" aria-label="Minutos" value={eMinutes} onChange={(e) => setEMinutes(e.target.value)} style={{ width: 70 }} />
+                <input type="text" aria-label="Enunciado" value={eStatement} onChange={(e) => setEStatement(e.target.value)} style={{ flex: "1 1 100%" }} />
+                <button className="btn-primary" disabled={busy} onClick={saveEdit}>Salvar revisão</button>
+                <button className="btn-secondary" onClick={() => setEditing(false)}>Cancelar</button>
+              </div>
+            )}
             {detail.scheduled_start && <p className="muted">Agendada para: {fmt(detail.scheduled_start)}</p>}
 
             {sugs.length > 0 && (

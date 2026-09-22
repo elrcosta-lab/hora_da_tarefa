@@ -32,6 +32,9 @@ def detect_mime(data: bytes) -> str | None:
 
 
 def _to_dict(hw: Homework) -> dict:
+    needs_review = None
+    if hw.extraction_status not in ("descartada", "falhou", "processando"):
+        needs_review = not (hw.subject and hw.due_at)
     return {
         "homework_id": hw.id,
         "child_id": hw.child_id,
@@ -47,7 +50,7 @@ def _to_dict(hw: Homework) -> dict:
         "estimated_minutes": hw.estimated_minutes,
         "priority": hw.priority,
         "confidence": float(hw.extraction_confidence) if hw.extraction_confidence is not None else None,
-        "needs_review": None,
+        "needs_review": needs_review,
         "extraction_json": hw.extraction_json,
         "scheduled_start": as_aware(hw.scheduled_start).isoformat() if hw.scheduled_start else None,
         "scheduled_end": as_aware(hw.scheduled_end).isoformat() if hw.scheduled_end else None,
@@ -312,7 +315,7 @@ def purge_expired_images(now: datetime | None = None) -> int:
 
 
 def update_homework_fields(homework_id: str, **fields) -> dict:
-    """Atualiza campos diretos (due_at aceita str YYYY-MM-DD/ISO ou datetime). Levanta KeyError."""
+    """Edição humana (RF-06). Valida; preencher críticos promove baixa_confianca → ok."""
     allowed = {"due_at", "subject", "title", "statement", "estimated_minutes", "priority"}
     with session_scope() as s:
         hw = s.get(Homework, homework_id)
@@ -322,8 +325,17 @@ def update_homework_fields(homework_id: str, **fields) -> dict:
             if k not in allowed:
                 raise ValueError(f"campo não editável: {k}")
             if k == "due_at" and isinstance(v, str):
-                v = _parse_due(v, None)
+                parsed = _parse_due(v, None)
+                if v is not None and parsed is None:
+                    raise ValueError(f"due_at inválida: {v!r} (use YYYY-MM-DD ou ISO)")
+                v = parsed
+            if k == "priority" and v is not None and int(v) not in (0, 1, 2):
+                raise ValueError("priority deve ser 0, 1 ou 2")
+            if k == "estimated_minutes" and v is not None and int(v) <= 0:
+                raise ValueError("estimated_minutes deve ser > 0")
             setattr(hw, k, v)
+        if hw.subject and hw.due_at and hw.extraction_status == "baixa_confianca":
+            hw.extraction_status = "ok"
         s.flush()
         return _to_dict(hw)
 
