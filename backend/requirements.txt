@@ -1,8 +1,10 @@
-# Hora da Tarefa — backend (F1 Núcleo IA: OpenRouter)
+# Hora da Tarefa — backend (F1 Núcleo IA: OpenRouter + API upload)
 # Python 3.11+ (testado em 3.12)
 openai>=1.40.0
 pydantic>=2.5.0
 pydantic-settings>=2.2.0
 Pillow>=10.0.0
 httpx>=0.27.0
+fastapi>=0.110.0
+python-multipart>=0.0.9
 pytest>=8.0.0
