@@ -5,10 +5,16 @@ export type Tokens = { access_token: string; refresh_token: string };
 
 const LS_ACCESS = "hdt.access";
 const LS_REFRESH = "hdt.refresh";
+const LS_USER = "hdt.user";
 
 export function getAccess(): string | null {
   if (typeof window === "undefined") return null;
   return localStorage.getItem(LS_ACCESS);
+}
+
+export function getUserId(): string | null {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem(LS_USER);
 }
 
 export function saveTokens(t: Tokens) {
@@ -19,6 +25,7 @@ export function saveTokens(t: Tokens) {
 export function clearTokens() {
   localStorage.removeItem(LS_ACCESS);
   localStorage.removeItem(LS_REFRESH);
+  localStorage.removeItem(LS_USER);
 }
 
 async function refresh(): Promise<boolean> {
@@ -63,6 +70,8 @@ export async function login(email: string, password: string) {
   if (!r.ok) throw new Error("E-mail ou senha inválidos.");
   const body = await r.json();
   saveTokens({ access_token: body.access_token, refresh_token: body.refresh_token });
+  if (typeof window !== "undefined" && body.user_id) localStorage.setItem(LS_USER, body.user_id);
+  return body.user_id as string | undefined;
 }
 
 export async function register(name: string, email: string, password: string) {
