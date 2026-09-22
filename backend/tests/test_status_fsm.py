@@ -89,16 +89,15 @@ def test_full_lifecycle_to_arquivada():
 
 
 def test_beat_marks_overdue_as_atrasada():
-    from app.tasks.extract import get_homework, mark_overdue
+    from app.tasks.extract import get_homework, mark_overdue, update_homework_fields
 
     from app.main import app
 
     client = TestClient(app)
     hid = _upload(client)
-    # simula prazo vencido
-    rec = get_homework(hid)
-    rec["due_at"] = "2020-01-01"
-    rec["status"] = "agendada"
+    # simula prazo vencido (escreve no banco — dicts são cópias destacadas)
+    update_homework_fields(hid, due_at="2020-01-01")
+    client.patch(f"/v1/homeworks/{hid}/status", json={"status": "agendada"})
     marked = mark_overdue(now="2026-09-22T10:00:00-03:00")
     assert hid in marked
     assert get_homework(hid)["status"] == "atrasada"

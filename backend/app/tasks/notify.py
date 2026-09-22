@@ -1,18 +1,18 @@
 """Lembretes 24h/2h + atraso com notification_log (SPECS §2.11 §6.4, PRD RF-10).
 
-MVP in-memory. Idempotência por key `{kind}:{homework_id}:{child_id}` (UNIQUE).
+Idempotência por key `{kind}:{homework_id}:{child_id}` (UNIQUE no banco).
 Quiet 21:30–07:00 (America/Sao_Paulo) empurra p/ 07:00. Envio real via Telegram
 (aiogram + vínculo chat) entra na fase infra; aqui dispatch marca sent.
+
+Retorna sempre dicts simples (nunca ORM detached).
 """
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-import uuid
 
-TZ = ZoneInfo("America/Sao_Paulo")
+from app.core.db import TZ, as_aware, session_scope
+from app.models import NotificationLog, NotificationSetting
+
 TERMINAL_HW = {"concluida", "nao_realizada", "cancelada", "arquivada"}
-
-_NOTIFICATIONS: dict[str, dict] = {}
-_SETTINGS: dict[str, dict] = {}
 
 
 def _defaults() -> dict:
@@ -20,32 +20,46 @@ def _defaults() -> dict:
 
 
 def get_settings(child_id: str) -> dict:
-    return {**_defaults(), **_SETTINGS.get(child_id, {})}
+    with session_scope() as s:
+        row = s.get(NotificationSetting, child_id)
+        if row is None:
+            return _defaults()
+        return {"lembrete_24h": row.lembrete_24h, "lembrete_2h": row.lembrete_2h,
+                "quiet_start": row.quiet_start, "quiet_end": row.quiet_end}
 
 
 def update_settings(child_id: str, patch: dict) -> dict:
-    cur = get_settings(child_id)
+    cur = {**_defaults(), **{k: v for k, v in get_settings(child_id).items()}}
     for k in ("lembrete_24h", "lembrete_2h"):
         if k in patch:
             cur[k] = bool(patch[k])
     for k in ("quiet_start", "quiet_end"):
         if k in patch and patch[k]:
             cur[k] = str(patch[k])
-    _SETTINGS[child_id] = cur
+    with session_scope() as s:
+        row = s.get(NotificationSetting, child_id)
+        if row is None:
+            row = NotificationSetting(child_id=child_id)
+            s.add(row)
+        row.lembrete_24h = cur["lembrete_24h"]
+        row.lembrete_2h = cur["lembrete_2h"]
+        row.quiet_start = cur["quiet_start"]
+        row.quiet_end = cur["quiet_end"]
+        s.flush()
     return cur
 
 
 def _parse_due(due) -> datetime | None:
     if due is None:
         return None
+    if isinstance(due, datetime):
+        return as_aware(due, TZ)
     s = str(due)
     try:
         if len(s) == 10:
             return datetime(int(s[0:4]), int(s[5:7]), int(s[8:10]), 23, 59, tzinfo=TZ)
         dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=TZ)
-        return dt
+        return as_aware(dt, TZ)
     except Exception:
         return None
 
@@ -77,24 +91,35 @@ def _key(kind: str, homework_id: str, child_id: str) -> str:
     return f"{kind}:{homework_id}:{child_id}"
 
 
-def _upsert(kind: str, hw_id: str, child_id: str, scheduled_for: datetime) -> tuple[dict, bool]:
-    key = _key(kind, hw_id, child_id)
-    if key in _NOTIFICATIONS:
-        return _NOTIFICATIONS[key], True
-    rec = {
-        "id": str(uuid.uuid4()),
-        "homework_id": hw_id,
-        "child_id": child_id,
-        "kind": kind,
-        "scheduled_for": scheduled_for,
-        "sent_at": None,
-        "status": "scheduled",
-        "idempotency_key": key,
-        "attempts": 0,
-        "error": None,
+def _to_dict(r: NotificationLog) -> dict:
+    return {
+        "id": r.id,
+        "homework_id": r.homework_id,
+        "child_id": r.child_id,
+        "kind": r.kind,
+        "scheduled_for": as_aware(r.scheduled_for, TZ),
+        "sent_at": as_aware(r.sent_at, TZ) if r.sent_at else None,
+        "status": r.status,
+        "idempotency_key": r.idempotency_key,
+        "attempts": r.attempts,
+        "error": r.error,
     }
-    _NOTIFICATIONS[key] = rec
-    return rec, False
+
+
+def _upsert(s, kind: str, hw_id: str, child_id: str, scheduled_for: datetime) -> tuple[dict, bool]:
+    import uuid
+
+    key = _key(kind, hw_id, child_id)
+    existing = s.query(NotificationLog).filter_by(idempotency_key=key).one_or_none()
+    if existing is not None:
+        return _to_dict(existing), True
+    naive = scheduled_for.replace(tzinfo=None) if scheduled_for.tzinfo else scheduled_for
+    rec = NotificationLog(id=str(uuid.uuid4()), homework_id=hw_id, child_id=child_id,
+                          kind=kind, scheduled_for=naive, status="scheduled",
+                          idempotency_key=key, attempts=0)
+    s.add(rec)
+    s.flush()
+    return _to_dict(rec), False
 
 
 def schedule_for_homework(homework_id: str, now: datetime | None = None) -> list[dict]:
@@ -108,23 +133,22 @@ def schedule_for_homework(homework_id: str, now: datetime | None = None) -> list
     child_id = rec.get("child_id")
     settings = get_settings(child_id)
     out: list[dict] = []
-
-    r, _ = _upsert("sugestao_inicial", homework_id, child_id, now)
-    out.append(r)
-
-    due = _parse_due(rec.get("due_at"))
-    if due is not None:
-        if settings.get("lembrete_24h", True):
-            sf = apply_quiet(due - timedelta(hours=24), settings["quiet_start"], settings["quiet_end"])
-            r, _ = _upsert("lembrete_24h", homework_id, child_id, sf)
-            out.append(r)
-        if settings.get("lembrete_2h", True):
-            sf = apply_quiet(due - timedelta(hours=2), settings["quiet_start"], settings["quiet_end"])
-            r, _ = _upsert("lembrete_2h", homework_id, child_id, sf)
-            out.append(r)
-        if due < now and rec.get("status") not in TERMINAL_HW:
-            r, _ = _upsert("atraso", homework_id, child_id, now)
-            out.append(r)
+    with session_scope() as s:
+        r, _ = _upsert(s, "sugestao_inicial", homework_id, child_id, now)
+        out.append(r)
+        due = _parse_due(rec.get("due_at"))
+        if due is not None:
+            if settings.get("lembrete_24h", True):
+                sf = apply_quiet(due - timedelta(hours=24), settings["quiet_start"], settings["quiet_end"])
+                r, _ = _upsert(s, "lembrete_24h", homework_id, child_id, sf)
+                out.append(r)
+            if settings.get("lembrete_2h", True):
+                sf = apply_quiet(due - timedelta(hours=2), settings["quiet_start"], settings["quiet_end"])
+                r, _ = _upsert(s, "lembrete_2h", homework_id, child_id, sf)
+                out.append(r)
+            if due < now and rec.get("status") not in TERMINAL_HW:
+                r, _ = _upsert(s, "atraso", homework_id, child_id, now)
+                out.append(r)
     return out
 
 
@@ -132,26 +156,32 @@ def dispatch_due(now: datetime | None = None) -> list[dict]:
     """Beat: envia tudo scheduled com scheduled_for <= now (uma única vez cada)."""
     now = now or datetime.now(TZ)
     sent: list[dict] = []
-    for rec in _NOTIFICATIONS.values():
-        if rec["status"] != "scheduled":
-            continue
-        if rec["scheduled_for"] <= now:
-            rec["status"] = "sent"
-            rec["sent_at"] = now
-            rec["attempts"] += 1
-            sent.append(rec)
+    with session_scope() as s:
+        rows = s.query(NotificationLog).filter_by(status="scheduled").all()
+        for rec in rows:
+            sf = as_aware(rec.scheduled_for, TZ)
+            if sf and sf <= now:
+                rec.status = "sent"
+                rec.sent_at = datetime.now(TZ).replace(tzinfo=None)
+                rec.attempts = (rec.attempts or 0) + 1
+                s.flush()
+                sent.append(_to_dict(rec))
     return sent
 
 
 def list_notifications(homework_id: str | None = None, child_id: str | None = None) -> list[dict]:
-    items = list(_NOTIFICATIONS.values())
-    if homework_id:
-        items = [r for r in items if r["homework_id"] == homework_id]
-    if child_id:
-        items = [r for r in items if r["child_id"] == child_id]
+    with session_scope() as s:
+        q = s.query(NotificationLog)
+        if homework_id:
+            q = q.filter_by(homework_id=homework_id)
+        if child_id:
+            q = q.filter_by(child_id=child_id)
+        items = [_to_dict(r) for r in q.all()]
     return sorted(items, key=lambda r: (r["scheduled_for"], r["kind"]))
 
 
 def clear_notifications() -> None:
-    _NOTIFICATIONS.clear()
-    _SETTINGS.clear()
+    """Apenas testes."""
+    with session_scope() as s:
+        s.query(NotificationLog).delete()
+        s.query(NotificationSetting).delete()

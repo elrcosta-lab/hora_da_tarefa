@@ -93,9 +93,9 @@ def test_quiet_hours_pushes_to_0700():
     # due 2026-09-25 23:59 → 2h antes = 21:59 (dentro da janela, ok);
     # due 2026-09-26 01:00 → 2h antes = 23:00 (quiet) → deve ir p/ 07:00 do dia 26
     hid = _upload_with_due(c, cid, due="2026-09-26")
-    from app.tasks.extract import get_homework
+    from app.tasks.extract import update_homework_fields
 
-    get_homework(hid)["due_at"] = "2026-09-26T01:00:00-03:00"
+    update_homework_fields(hid, due_at="2026-09-26T01:00:00-03:00")
     N.clear_notifications()
     N.schedule_for_homework(hid)
     recs = {r["kind"]: r for r in N.list_notifications(homework_id=hid)}

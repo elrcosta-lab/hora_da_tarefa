@@ -1,15 +1,20 @@
-"""Task/fila de extração (SPECS §5 v1.1) — MVP in-memory, pronto p/ Celery/Redis.
+"""Task/fila de extração (SPECS §5 v1.1) — Postgres/SQLite.
 
-Dedupe por SHA-256: mesma foto nunca reprocessa nem rechama OpenRouter.
-Backoff 1/5/30 min e concorrência 3–5 serão configurados no Celery (fase infra).
+Dedupe por SHA-256: mesma foto nunca reprocessa nem rechama OpenRouter
+(UNIQUE homework_image.homework_id+sha256 + lookup prévio).
+Bytes brutos do upload ficam em cache transitório em memória até a extração
+rodar no mesmo processo (migração p/ MinIO na próxima etapa de storage).
+
+Retorna sempre dicts simples (nunca ORM detached).
 """
 import hashlib
 import uuid
 from datetime import datetime, timezone
 
-# store MVP: chave "{child_id}:{sha256}" → homework_id ; homework_id → registro
-_UPLOADS: dict[str, str] = {}
-_HOMEWORKS: dict[str, dict] = {}
+from app.core.db import as_aware, session_scope
+from app.models import Homework
+
+# cache transitório dos bytes até run_extraction (mesmo processo) — ver MinIO pós-F0
 _IMAGES: dict[str, bytes] = {}
 
 
@@ -28,89 +33,129 @@ def detect_mime(data: bytes) -> str | None:
     return None
 
 
+def _to_dict(hw: Homework) -> dict:
+    return {
+        "homework_id": hw.id,
+        "child_id": hw.child_id,
+        "status": hw.status,
+        "extraction_status": hw.extraction_status,
+        "sha256": (hw.extraction_json or {}).get("meta", {}).get("image_sha256"),
+        "hint_text": None,
+        "subject": hw.subject,
+        "title": hw.title,
+        "statement": hw.statement,
+        "due_at": as_aware(hw.due_at).isoformat() if hw.due_at else None,
+        "estimated_minutes": hw.estimated_minutes,
+        "priority": hw.priority,
+        "confidence": float(hw.extraction_confidence) if hw.extraction_confidence is not None else None,
+        "needs_review": None,
+        "extraction_json": hw.extraction_json,
+        "scheduled_start": as_aware(hw.scheduled_start).isoformat() if hw.scheduled_start else None,
+        "scheduled_end": as_aware(hw.scheduled_end).isoformat() if hw.scheduled_end else None,
+        "updated_at": as_aware(hw.updated_at).isoformat() if hw.updated_at else None,
+    }
+
+
 def get_or_create_homework(image_bytes: bytes, child_id: str, hint_text: str | None = None) -> tuple[dict, bool]:
     """Retorna (registro, deduplicated). Registro mínimo p/ 202 imediato; extração roda em background."""
     sha = sha256_bytes(image_bytes)
-    key = f"{child_id}:{sha}"
-    if key in _UPLOADS:
-        hid = _UPLOADS[key]
-        return _HOMEWORKS[hid], True
-    hid = str(uuid.uuid4())
-    rec = {
-        "homework_id": hid,
-        "child_id": child_id,
-        "status": "pendente",
-        "extraction_status": "processando",
-        "sha256": sha,
-        "hint_text": hint_text,
-        "subject": None,
-        "title": None,
-        "statement": None,
-        "due_at": None,
-        "estimated_minutes": None,
-        "priority": 1,
-        "confidence": None,
-        "needs_review": None,
-    }
-    _UPLOADS[key] = hid
-    _HOMEWORKS[hid] = rec
-    _IMAGES[hid] = image_bytes
-    return rec, False
+    with session_scope() as s:
+        existing = (
+            s.query(Homework)
+            .filter_by(child_id=child_id)
+            .order_by(Homework.created_at)
+            .all()
+        )
+        for hw in existing:
+            meta = (hw.extraction_json or {}).get("meta", {})
+            if meta.get("image_sha256") == sha:
+                return _to_dict(hw), True
+            # registro ainda processando guarda o sha em hint interno? fallback: compara via _IMAGES
+        hid = str(uuid.uuid4())
+        hw = Homework(id=hid, child_id=child_id, status="pendente",
+                      extraction_status="processando",
+                      extraction_json={"meta": {"image_sha256": sha, "hint_text": hint_text}})
+        s.add(hw)
+        s.flush()
+        rec = _to_dict(hw)
+        rec["hint_text"] = hint_text
+        _IMAGES[hid] = image_bytes
+        return rec, False
 
 
 def get_homework(homework_id: str) -> dict | None:
-    return _HOMEWORKS.get(homework_id)
+    with session_scope() as s:
+        hw = s.get(Homework, homework_id)
+        return _to_dict(hw) if hw else None
 
 
 def list_homeworks(child_id: str | None = None) -> list[dict]:
-    items = list(_HOMEWORKS.values())
-    if child_id:
-        items = [r for r in items if r["child_id"] == child_id]
-    return items
+    with session_scope() as s:
+        q = s.query(Homework).order_by(Homework.created_at)
+        if child_id:
+            q = q.filter_by(child_id=child_id)
+        return [_to_dict(hw) for hw in q.all()]
+
+
+def _parse_result_due(due_str: str | None):
+    """due_at do modelo (YYYY-MM-DD) → DateTime SP 23:59; None → None."""
+    if not due_str:
+        return None
+    from zoneinfo import ZoneInfo
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    try:
+        return datetime(int(due_str[0:4]), int(due_str[5:7]), int(due_str[8:10]), 23, 59, tzinfo=tz)
+    except Exception:
+        return None
 
 
 def run_extraction(homework_id: str, client=None) -> dict | None:
     """Background: anonimiza→OpenRouter→atualiza registro. Idempotente por homework_id."""
     from app.services.vision_openrouter import ExtractionFailed, OpenRouterRateLimited, extract_homework
 
-    rec = _HOMEWORKS.get(homework_id)
-    if rec is None:
-        return None
-    # dedupe: se já extraído com sucesso, não rechama API
-    if rec.get("extraction_status") in ("ok", "baixa_confianca", "descartada"):
-        return rec
-    image_bytes = _IMAGES.get(homework_id)
-    if image_bytes is None:
-        return rec
-    try:
-        result = extract_homework(image_bytes, hint_text=rec.get("hint_text"), client=client)
-    except OpenRouterRateLimited as exc:
-        rec["extraction_status"] = "processando"
-        rec["last_error"] = f"RATE_LIMITED: {exc}"
-        return rec
-    except ExtractionFailed as exc:
-        rec["extraction_status"] = "falhou"
-        rec["last_error"] = str(exc)
-        return rec
-    if not result.is_homework:
-        rec["extraction_status"] = "descartada"
-        rec["confidence"] = result.confidence
-        rec["needs_review"] = True
-        return rec
-    rec.update(
-        {
-            "subject": result.subject,
-            "title": result.title,
-            "statement": result.statement,
-            "due_at": result.due_at,
-            "estimated_minutes": result.estimated_minutes,
-            "priority": result.priority,
-            "confidence": result.confidence,
-            "needs_review": result.needs_review,
-            "extraction_status": result.extraction_status,
-            "extraction_json": result.model_dump(),
-        }
-    )
+    with session_scope() as s:
+        hw = s.get(Homework, homework_id)
+        if hw is None:
+            return None
+        if hw.extraction_status in ("ok", "baixa_confianca", "descartada"):
+            return _to_dict(hw)
+        image_bytes = _IMAGES.get(homework_id)
+        if image_bytes is None:
+            return _to_dict(hw)
+        hint = (hw.extraction_json or {}).get("meta", {}).get("hint_text")
+        try:
+            result = extract_homework(image_bytes, hint_text=hint, client=client)
+        except OpenRouterRateLimited as exc:
+            hw.extraction_status = "processando"
+            meta = dict((hw.extraction_json or {}).get("meta", {}))
+            meta["last_error"] = f"RATE_LIMITED: {exc}"
+            hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
+            s.flush()
+            return _to_dict(hw)
+        except ExtractionFailed as exc:
+            hw.extraction_status = "falhou"
+            meta = dict((hw.extraction_json or {}).get("meta", {}))
+            meta["last_error"] = str(exc)
+            hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
+            s.flush()
+            return _to_dict(hw)
+        if not result.is_homework:
+            hw.extraction_status = "descartada"
+            hw.extraction_confidence = result.confidence
+            s.flush()
+            return _to_dict(hw)
+        hw.subject = result.subject
+        hw.title = result.title
+        hw.statement = result.statement
+        hw.due_at = _parse_result_due(result.due_at)
+        hw.estimated_minutes = result.estimated_minutes
+        hw.priority = result.priority
+        hw.extraction_confidence = result.confidence
+        hw.extraction_status = result.extraction_status
+        hw.extraction_json = result.model_dump()
+        s.flush()
+        rec = _to_dict(hw)
     try:
         from app.tasks import notify as _N
 
@@ -122,9 +167,26 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
 
 def clear_store() -> None:
     """Apenas testes."""
-    _UPLOADS.clear()
-    _HOMEWORKS.clear()
+    with session_scope() as s:
+        s.query(Homework).delete()
     _IMAGES.clear()
+
+
+def update_homework_fields(homework_id: str, **fields) -> dict:
+    """Atualiza campos diretos (due_at aceita str YYYY-MM-DD/ISO ou datetime). Levanta KeyError."""
+    allowed = {"due_at", "subject", "title", "statement", "estimated_minutes", "priority"}
+    with session_scope() as s:
+        hw = s.get(Homework, homework_id)
+        if hw is None:
+            raise KeyError(homework_id)
+        for k, v in fields.items():
+            if k not in allowed:
+                raise ValueError(f"campo não editável: {k}")
+            if k == "due_at" and isinstance(v, str):
+                v = _parse_due(v, None)
+            setattr(hw, k, v)
+        s.flush()
+        return _to_dict(hw)
 
 
 # --- FSM de status (SPECS §4.6 v1.1, PRD RF-09) ---
@@ -152,19 +214,18 @@ class StatusConflict(Exception):
 
 def transition_homework(homework_id: str, new_status: str) -> dict:
     """Transição validada pela FSM. Levanta StatusConflict fora da matriz, KeyError se inexistente."""
-    rec = _HOMEWORKS.get(homework_id)
-    if rec is None:
-        raise KeyError(homework_id)
-    current = rec.get("status", "pendente")
-    if new_status == current:
-        return rec
-    allowed = TRANSITIONS.get(current, [])
-    if new_status not in allowed:
-        raise StatusConflict(current, new_status)
-    rec["status"] = new_status
-    rec["updated_at"] = datetime.now(timezone.utc).isoformat()
-    rec.setdefault("events", []).append({"from": current, "to": new_status, "at": rec["updated_at"]})
-    return rec
+    with session_scope() as s:
+        hw = s.get(Homework, homework_id)
+        if hw is None:
+            raise KeyError(homework_id)
+        current = hw.status or "pendente"
+        if new_status != current:
+            if new_status not in TRANSITIONS.get(current, []):
+                raise StatusConflict(current, new_status)
+            hw.status = new_status
+            hw.updated_at = datetime.now(timezone.utc)
+            s.flush()
+        return _to_dict(hw)
 
 
 def mark_overdue(now: str | None = None) -> list[str]:
@@ -172,22 +233,20 @@ def mark_overdue(now: str | None = None) -> list[str]:
     from datetime import datetime as _dt
 
     marked: list[str] = []
-    for hid, rec in _HOMEWORKS.items():
-        if rec.get("status") not in ("pendente", "agendada"):
-            continue
-        due = rec.get("due_at")
-        if not due:
-            continue
-        try:
-            # due_at YYYY-MM-DD ou ISO; compara por prefixo de data
-            due_day = str(due)[:10]
-            today = (now or _dt.now().astimezone().isoformat())[:10]
-            if due_day < today:
-                rec["status"] = "atrasada"
-                rec["updated_at"] = _dt.now(timezone.utc).isoformat()
-                marked.append(hid)
-        except Exception:
-            continue
+    with session_scope() as s:
+        rows = s.query(Homework).filter(Homework.status.in_(["pendente", "agendada"])).all()
+        today = (now or _dt.now().astimezone().isoformat())[:10]
+        for hw in rows:
+            if not hw.due_at:
+                continue
+            try:
+                due_day = as_aware(hw.due_at).isoformat()[:10]
+                if due_day < today:
+                    hw.status = "atrasada"
+                    hw.updated_at = _dt.now(timezone.utc)
+                    marked.append(hw.id)
+            except Exception:
+                continue
     return marked
 
 
@@ -199,6 +258,11 @@ def _parse_due(due, tz):
     tzinfo = ZoneInfo("America/Sao_Paulo") if tz is None else tz
     if due is None:
         return None
+    if isinstance(due, datetime):
+        dt = due
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=tzinfo)
+        return dt
     s = str(due)
     try:
         if len(s) == 10:  # YYYY-MM-DD → 23:59 local
@@ -221,7 +285,7 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
 
     from app.services.scheduling import suggest_slots
 
-    rec = _HOMEWORKS.get(homework_id)
+    rec = get_homework(homework_id)
     if rec is None:
         raise KeyError(homework_id)
     if schedules is None or activities is None:
@@ -271,7 +335,7 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
 
 def accept_suggestion(homework_id: str, start_at_iso: str) -> dict:
     """Agenda o slot escolhido (deve estar entre as sugestões atuais)."""
-    rec = _HOMEWORKS.get(homework_id)
+    rec = get_homework(homework_id)
     if rec is None:
         raise KeyError(homework_id)
     try:
@@ -281,8 +345,11 @@ def accept_suggestion(homework_id: str, start_at_iso: str) -> dict:
     match = next((s for s in suggestions if s["start_at"] == start_at_iso), None)
     if match is None:
         raise StatusConflict(rec.get("status", "pendente"), f"slot:{start_at_iso}")
-    rec["scheduled_start"] = match["start_at"]
-    rec["scheduled_end"] = match["end_at"]
+    with session_scope() as s:
+        hw = s.get(Homework, homework_id)
+        hw.scheduled_start = _parse_due(match["start_at"], None)
+        hw.scheduled_end = _parse_due(match["end_at"], None)
+        s.flush()
     if rec.get("status") == "pendente":
         transition_homework(homework_id, "agendada")
     try:
@@ -291,4 +358,4 @@ def accept_suggestion(homework_id: str, start_at_iso: str) -> dict:
         _N.schedule_for_homework(homework_id)
     except Exception:
         pass
-    return rec
+    return get_homework(homework_id)
