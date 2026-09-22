@@ -152,20 +152,60 @@ def schedule_for_homework(homework_id: str, now: datetime | None = None) -> list
     return out
 
 
-def dispatch_due(now: datetime | None = None) -> list[dict]:
-    """Beat: envia tudo scheduled com scheduled_for <= now (uma única vez cada)."""
+def _render(kind: str, hw: dict) -> str:
+    subject = hw.get("subject") or "Tarefa"
+    title = hw.get("title") or "sem título"
+    if kind == "lembrete_24h":
+        return f"⏰ Falta 1 dia\n{subject} — \"{title}\"\n[✅ Concluir]"
+    if kind == "lembrete_2h":
+        return f"⚡ Em 2 horas\n{subject} — \"{title}\". Vai dar tempo? 💪\n[✅ Concluir]"
+    if kind == "atraso":
+        return f"⚠️ Tarefa atrasada\n{subject} — \"{title}\".\n[✅ Concluir]"
+    return f"📚 Nova tarefa detectada\n{subject} — \"{title}\""
+
+
+def _recipient_chat(homework_id: str) -> int | None:
+    """Chat do dono vinculado (created_by_user_id → telegram_user_id). None = sem entrega."""
+    from app.tasks.extract import get_homework
+
+    hw = get_homework(homework_id)
+    owner = (hw or {}).get("created_by_user_id")
+    if not owner:
+        return None
+    with session_scope() as s:
+        from app.models import AppUser
+
+        u = s.get(AppUser, owner)
+        return int(u.telegram_user_id) if u and u.telegram_user_id else None
+
+
+def dispatch_due(now: datetime | None = None, sender=None) -> list[dict]:
+    """Beat: envia tudo scheduled com scheduled_for <= now (uma única vez cada).
+
+    sender(chat_id, text): quando fornecido e há dono vinculado, entrega via
+    Telegram antes de marcar sent. Sem sender/dono, só marca sent (modo teste).
+    """
     now = now or datetime.now(TZ)
     sent: list[dict] = []
     with session_scope() as s:
         rows = s.query(NotificationLog).filter_by(status="scheduled").all()
+        due_rows = []
         for rec in rows:
             sf = as_aware(rec.scheduled_for, TZ)
             if sf and sf <= now:
-                rec.status = "sent"
-                rec.sent_at = datetime.now(TZ).replace(tzinfo=None)
-                rec.attempts = (rec.attempts or 0) + 1
-                s.flush()
-                sent.append(_to_dict(rec))
+                due_rows.append(rec)
+        for rec in due_rows:
+            if sender is not None:
+                chat = _recipient_chat(rec.homework_id)
+                if chat is not None:
+                    from app.tasks.extract import get_homework
+
+                    sender(chat, _render(rec.kind, get_homework(rec.homework_id) or {}))
+            rec.status = "sent"
+            rec.sent_at = datetime.now(TZ).replace(tzinfo=None)
+            rec.attempts = (rec.attempts or 0) + 1
+            s.flush()
+            sent.append(_to_dict(rec))
     return sent
 
 

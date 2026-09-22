@@ -35,6 +35,7 @@ def _to_dict(hw: Homework) -> dict:
     return {
         "homework_id": hw.id,
         "child_id": hw.child_id,
+        "created_by_user_id": hw.created_by_user_id,
         "status": hw.status,
         "extraction_status": hw.extraction_status,
         "sha256": (hw.extraction_json or {}).get("meta", {}).get("image_sha256"),
@@ -54,7 +55,8 @@ def _to_dict(hw: Homework) -> dict:
     }
 
 
-def get_or_create_homework(image_bytes: bytes, child_id: str, hint_text: str | None = None) -> tuple[dict, bool]:
+def get_or_create_homework(image_bytes: bytes, child_id: str, hint_text: str | None = None,
+                           created_by_user_id: str | None = None) -> tuple[dict, bool]:
     """Retorna (registro, deduplicated). Registro mínimo p/ 202 imediato; extração roda em background."""
     sha = sha256_bytes(image_bytes)
     mime = detect_mime(image_bytes) or "application/octet-stream"
@@ -71,7 +73,8 @@ def get_or_create_homework(image_bytes: bytes, child_id: str, hint_text: str | N
             hw = s.get(Homework, dup.homework_id)
             return _to_dict(hw), True
         hid = str(uuid.uuid4())
-        hw = Homework(id=hid, child_id=child_id, status="pendente",
+        hw = Homework(id=hid, child_id=child_id, created_by_user_id=created_by_user_id,
+                      status="pendente",
                       extraction_status="processando",
                       extraction_json={"meta": {"image_sha256": sha, "hint_text": hint_text}})
         s.add(hw)

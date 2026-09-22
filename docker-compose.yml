@@ -69,8 +69,9 @@ services:
       S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY ausente no .env}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY ausente no .env}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemma-4-26b-a4b-it:free}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-change-me}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN ausente no .env}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-change-me}
+      TELEGRAM_LIVE_SEND: "true"
     networks: [internal, web]
     deploy:
       resources:

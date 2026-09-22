@@ -913,6 +913,7 @@ AI_JPEG_QUALITY=82
 - **Desenvolvimento/local:** polling via `aiogram` (`RUN_MODE=polling`), útil na VPS sem domínio.
 - **Idempotência:** dedupe por `update_id` (Redis SET NX, TTL 24 h); reenvio do Telegram não duplica ação.
 - **Gate de acesso (obrigatório):** somente `telegram_user_id` vinculados acessam o bot. Pareamento via `POST /v1/auth/telegram/link` (gera código de 6 dígitos single-use) consumido no chat como código puro ou `/start <código>`. Sem vínculo: qualquer comando/foto/callback recebe mensagem de acesso restrito e **nada é criado nem listado** (sem vazamento de dados entre responsáveis). Tabela `app_user` (migração `0003`).
+- **Bot API real (sem aiogram):** `app/bot/telegram_api.py` (httpx) — fotos baixadas via `getFile` (falha → msg de erro, nada criado; jamás sintetiza bytes); respostas descarregadas do outbox via `sendMessage` em background quando `TELEGRAM_LIVE_SEND=true` (compose). `dispatch_due(sender=)` entrega lembretes 24h/2h/atraso ao `created_by_user_id` vinculado (templates §6.3), uma única vez por `idempotency_key`.
 
 ### 6.2 Comandos e handlers
 

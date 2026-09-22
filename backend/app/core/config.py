@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     TELEGRAM_BOT_TOKEN: str = "change-me"
     TELEGRAM_WEBHOOK_SECRET: str = "change-me"
+    TELEGRAM_LIVE_SEND: bool = False
     RUN_MODE: str = "polling"
 
 

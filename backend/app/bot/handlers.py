@@ -1,13 +1,21 @@
-"""Bot Telegram — handlers puros + outbox in-memory (SPECS §6 v1.1, RF-08).
+"""Bot Telegram — handlers puros + outbox (SPECS §6 v1.1, RF-08).
 
-MVP sem aiogram: parseia Update do Telegram direto no webhook.
-Download real do arquivo (getFile) entra na fase infra; aqui a foto gera
-homework via bytes sintetizados válidos (pipeline real de download só injeta bytes).
-Idempotência por update_id (TTL 24h na fase Redis; aqui set em memória).
+MVP sem aiogram: parseia Update direto no webhook. Fotos baixadas via getFile
+(app.bot.telegram_api); test_bytes_b64 existe só como backdoor de testes.
+Outbox em memória alimenta os testes; com TELEGRAM_LIVE_SEND=true o router
+descarrega via sendMessage em background. Idempotência por update_id.
 """
-import base64
 import hashlib
-import io
+
+
+def drain_outbox() -> list[tuple[int, str]]:
+    """Remove e retorna todas as mensagens pendentes (flush p/ Bot API)."""
+    items: list[tuple[int, str]] = []
+    for chat_id, msgs in list(_OUTBOX.items()):
+        for text in msgs:
+            items.append((chat_id, text))
+    _OUTBOX.clear()
+    return items
 
 
 _SEEN: set[int] = set()
@@ -46,24 +54,21 @@ def _ensure_child():
     return R.create_child("Filho")
 
 
-def _synthesize_photo_bytes(caption: str | None = None) -> bytes:
-    from PIL import Image
+def _extract_photo_bytes(message: dict, token: str | None = None) -> bytes:
+    import base64 as _b64
 
-    seed = abs(hash(caption or "tarefa")) % 200
-    img = Image.new("RGB", (800, 600), (100 + seed % 100, 150, 200))
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG", quality=85)
-    return buf.getvalue()
+    from app.bot import telegram_api as _tg
 
-
-def _extract_photo_bytes(message: dict) -> bytes:
     b64 = message.get("test_bytes_b64")
     if b64:
         try:
-            return base64.b64decode(b64)
+            return _b64.b64decode(b64)
         except Exception:
             pass
-    return _synthesize_photo_bytes(message.get("caption"))
+    photos = message.get("photo") or []
+    if not photos:
+        raise _tg.TelegramError("mensagem sem photo")
+    return _tg.download_photo(token or "", photos)
 
 
 def _find_homework(prefix: str):
@@ -216,12 +221,21 @@ def handle_update(update: dict) -> dict:
             _send(chat_id, RESTRICTED_MSG)
         return {"ok": True, "restricted": True}
 
-    # foto → upload (RF-04)
+    # foto → upload (RF-04): download real via getFile; falha → erro, nada criado
     if message.get("photo"):
+        from app.bot import telegram_api as _tg
+        from app.core.config import get_settings as _get_settings
+
+        try:
+            image_bytes = _extract_photo_bytes(message, token=_get_settings().TELEGRAM_BOT_TOKEN)
+        except Exception:
+            _send(chat_id, "Não consegui baixar a foto. Tente enviar novamente. 📷")
+            return {"ok": True, "download_failed": True}
+        user = _resolve_user(telegram_user_id)
         child = _ensure_child()
-        image_bytes = _extract_photo_bytes(message)
         rec, dedup = get_or_create_homework(
-            image_bytes, child_id=child["id"], hint_text=message.get("caption")
+            image_bytes, child_id=child["id"], hint_text=message.get("caption"),
+            created_by_user_id=(user or {}).get("user_id"),
         )
         if dedup:
             _send(chat_id, "Essa foto já foi registrada. Estou processando. ⏳")

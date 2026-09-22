@@ -76,12 +76,21 @@ def test_start_returns_welcome_with_link_code():
 def test_photo_upload_creates_homework_and_replies_processando():
     _link(7)
     c = _client()
-    # foto sem file_bytes usa bytes JPEG válidos embutidos pelo handler de teste
+    import base64
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", (800, 600), (9, 9, 9))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
     r = c.post("/v1/telegram/webhook", headers=_headers(), json={
         "update_id": 20,
         "message": {"message_id": 2, "from": {"id": 7}, "chat": {"id": 7},
                     "photo": [{"file_id": "abc", "width": 800, "height": 600}],
-                    "caption": "é de matemática"},
+                    "caption": "é de matemática",
+                    "test_bytes_b64": b64},
     })
     assert r.status_code == 200
     assert r.json()["ok"] is True
