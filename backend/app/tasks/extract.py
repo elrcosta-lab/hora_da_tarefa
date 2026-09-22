@@ -96,16 +96,88 @@ def get_homework(homework_id: str) -> dict | None:
         return _to_dict(hw) if hw else None
 
 
-def list_homeworks(child_id: str | None = None, owner_user_id: str | None = None) -> list[dict]:
+def list_homeworks(child_id: str | None = None, owner_user_id: str | None = None,
+                   status: list[str] | None = None, subject: str | None = None,
+                   due_before: str | None = None, due_after: str | None = None,
+                   q: str | None = None, sort: str = "created_at") -> list[dict]:
+    """Lista com filtros combinados (RF-12). due_* aceitam YYYY-MM-DD ou ISO; q busca em title/statement."""
     from app.models import Child
 
     with session_scope() as s:
-        q = s.query(Homework).order_by(Homework.created_at)
+        query = s.query(Homework).order_by(Homework.created_at)
         if child_id:
-            q = q.filter_by(child_id=child_id)
+            query = query.filter_by(child_id=child_id)
         if owner_user_id is not None:
-            q = q.join(Child, Child.id == Homework.child_id).filter(Child.owner_user_id == owner_user_id)
-        return [_to_dict(hw) for hw in q.all()]
+            query = query.join(Child, Child.id == Homework.child_id).filter(
+                Child.owner_user_id == owner_user_id)
+        items = [_to_dict(hw) for hw in query.all()]
+
+    if status:
+        wanted = {t.strip() for t in status} if isinstance(status, (list, tuple, set)) else {status}
+        items = [r for r in items if r.get("status") in wanted]
+    if subject:
+        items = [r for r in items if (r.get("subject") or "").lower() == subject.lower()]
+    if due_before:
+        items = [r for r in items if r.get("due_at") and r["due_at"][:10] < due_before[:10]]
+    if due_after:
+        items = [r for r in items if r.get("due_at") and r["due_at"][:10] > due_after[:10]]
+    if q:
+        needle = q.lower()
+        items = [r for r in items
+                 if needle in (r.get("title") or "").lower() or needle in (r.get("statement") or "").lower()]
+    reverse = sort.startswith("-")
+    key = sort.lstrip("-")
+    if key == "due_at":
+        items.sort(key=lambda r: (r.get("due_at") or "9999", r["homework_id"]), reverse=reverse)
+    return items
+
+
+def today_overview(owner_user_id: str, child_id: str | None = None, date: str | None = None) -> dict:
+    """Dashboard Hoje (RF-11): tarefas vencendo hoje, atrasadas e agendadas p/ hoje. Data SP YYYY-MM-DD."""
+    from datetime import datetime as _dt
+
+    from app.core.db import TZ
+
+    today = (date or _dt.now(TZ).isoformat())[:10]
+    items = list_homeworks(child_id=child_id, owner_user_id=owner_user_id)
+
+    def _item(r: dict) -> dict:
+        return {"id": r["homework_id"], "child_id": r["child_id"], "subject": r.get("subject"),
+                "title": r.get("title"), "due_at": r.get("due_at"), "status": r.get("status"),
+                "extraction_confidence": r.get("confidence"),
+                "estimated_minutes": r.get("estimated_minutes"),
+                "scheduled_start": r.get("scheduled_start")}
+
+    due_today = [_item(r) for r in items if r.get("due_at") and r["due_at"][:10] == today
+                 and r.get("status") not in TERMINAL]
+    overdue = [_item(r) for r in items if r.get("status") == "atrasada"
+               or (r.get("due_at") and r["due_at"][:10] < today
+                   and r.get("status") in ("pendente", "agendada"))]
+    scheduled = [_item(r) for r in items if r.get("scheduled_start") and r["scheduled_start"][:10] == today
+                 and r.get("status") not in TERMINAL]
+    return {"date": today, "due_today": due_today, "overdue": overdue, "scheduled_today": scheduled}
+
+
+def export_csv(owner_user_id: str, child_id: str | None = None, status=None, subject: str | None = None,
+               due_before: str | None = None, due_after: str | None = None,
+               q: str | None = None, sort: str = "created_at") -> str:
+    """CSV UTF-8 (RF-12) com os mesmos filtros da listagem. Chamador adiciona BOM p/ Excel."""
+    import csv as _csv
+    import io as _io
+
+    items = list_homeworks(child_id=child_id, owner_user_id=owner_user_id, status=status,
+                           subject=subject, due_before=due_before, due_after=due_after,
+                           q=q, sort=sort)
+    buf = _io.StringIO()
+    w = _csv.writer(buf)
+    w.writerow(["id", "child_id", "subject", "title", "due_at", "status",
+                "scheduled_start", "estimated_minutes", "priority"])
+    for r in items:
+        w.writerow([r["homework_id"], r["child_id"], r.get("subject") or "",
+                    r.get("title") or "", r.get("due_at") or "", r.get("status"),
+                    r.get("scheduled_start") or "", r.get("estimated_minutes") or "",
+                    r.get("priority", 1)])
+    return buf.getvalue()
 
 
 def homework_owner_id(homework_id: str) -> str | None:

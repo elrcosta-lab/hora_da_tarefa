@@ -9,11 +9,13 @@ from app.tasks.extract import (
     StatusConflict,
     accept_suggestion,
     detect_mime,
+    export_csv,
     get_homework,
     get_or_create_homework,
     list_homeworks,
     owned_by,
     run_extraction,
+    today_overview,
     transition_homework,
 )
 
@@ -78,15 +80,22 @@ async def upload_homework(
 
 
 @router.get("", status_code=200)
-def list_homeworks_view(child_id: str | None = None, page: int = 1, page_size: int = 20,
+def list_homeworks_view(child_id: str | None = None, status: str | None = None,
+                        subject: str | None = None, due_before: str | None = None,
+                        due_after: str | None = None, q: str | None = None,
+                        sort: str = "created_at",
+                        page: int = 1, page_size: int = 20,
                         owner: str = Depends(get_current_user_id)):
     if child_id is not None:
         if R.get_child(child_id) is None:
             return _error("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
         if not R.owns(child_id, owner):
             return _error("FORBIDDEN", "Sem acesso a esta criança.", 403)
+    status_list = [t.strip() for t in status.split(",") if t.strip()] if status else None
     page_size = max(1, min(page_size, 100))
-    items = list_homeworks(child_id=child_id, owner_user_id=owner)
+    items = list_homeworks(child_id=child_id, owner_user_id=owner, status=status_list,
+                           subject=subject, due_before=due_before, due_after=due_after,
+                           q=q, sort=sort)
     total = len(items)
     start = (page - 1) * page_size
     page_items = items[start : start + page_size]
@@ -110,6 +119,37 @@ def list_homeworks_view(child_id: str | None = None, page: int = 1, page_size: i
         "page_size": page_size,
         "total": total,
     }
+
+
+@router.get("/today", status_code=200)
+def today_view(child_id: str | None = None, date: str | None = None,
+               owner: str = Depends(get_current_user_id)):
+    if child_id is not None:
+        if R.get_child(child_id) is None:
+            return _error("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
+        if not R.owns(child_id, owner):
+            return _error("FORBIDDEN", "Sem acesso a esta criança.", 403)
+    return today_overview(owner, child_id=child_id, date=date)
+
+
+@router.get("/export", status_code=200)
+def export_view(child_id: str | None = None, status: str | None = None,
+                subject: str | None = None, due_before: str | None = None,
+                due_after: str | None = None, q: str | None = None,
+                sort: str = "created_at",
+                owner: str = Depends(get_current_user_id)):
+    from fastapi.responses import Response
+
+    if child_id is not None:
+        if R.get_child(child_id) is None:
+            return _error("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
+        if not R.owns(child_id, owner):
+            return _error("FORBIDDEN", "Sem acesso a esta criança.", 403)
+    status_list = [t.strip() for t in status.split(",") if t.strip()] if status else None
+    csv_text = export_csv(owner, child_id=child_id, status=status_list, subject=subject,
+                          due_before=due_before, due_after=due_after, q=q, sort=sort)
+    return Response(content="\ufeff" + csv_text, media_type="text/csv; charset=utf-8",
+                    headers={"Content-Disposition": "attachment; filename=homeworks.csv"})
 
 
 @router.get("/{homework_id}", status_code=200)

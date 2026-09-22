@@ -454,9 +454,9 @@ Upload de foto da tarefa. `multipart/form-data`.
 
 ### 3.3 `GET /homeworks`
 
-Lista paginada e filtrada.
+Lista paginada e filtrada (RF-11/12, tudo escopado por dono).
 
-**Query params:** `child_id`, `status` (CSV), `subject`, `due_before`, `due_after`, `q` (busca em title/statement), `page` (default 1), `page_size` (default 20, max 100), `sort` (`due_at|-due_at|created_at`).
+**Query params:** `child_id`, `status` (CSV), `subject`, `due_before`, `due_after` (YYYY-MM-DD ou ISO), `q` (busca em title/statement), `page` (default 1), `page_size` (default 20, max 100), `sort` (`due_at|-due_at|created_at`, default `created_at`).
 
 **Response 200**
 ```json
@@ -600,6 +600,8 @@ Idempotência: dedupe por `update_id` em tabela/redis (TTL 24h); updates repetid
 | POST | `/notifications/settings` | Preferências (24h/2h on/off, quiet hours) |
 | GET | `/notifications` | Histórico de notificações |
 | POST | `/homeworks/:id/reprocess` | Reenfileira extração IA |
+| GET | `/homeworks/today` | Dashboard Hoje: `{date, due_today[], overdue[], scheduled_today[]}` (filtro `child_id`/`date` opcional, escopo por dono) |
+| GET | `/homeworks/export` | CSV UTF-8 (com BOM p/ Excel) com os mesmos filtros de `GET /homeworks` |
 
 ---
 
