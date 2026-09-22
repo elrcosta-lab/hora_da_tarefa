@@ -10,17 +10,30 @@ export default function LoginPage() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    if (mode === "register" && !consent) {
+      setError("É preciso aceitar o consentimento parental para criar a conta.");
+      return;
+    }
     setBusy(true);
     try {
-      if (mode === "login") await login(email, password);
-      else await register(name, email, password);
-      router.push("/");
+      if (mode === "login") {
+        await login(email, password);
+      } else {
+        await register(name, email, password);
+        router.push("/onboarding");
+        return;
+      }
+      // login: sem filhos → onboarding; com filhos → dashboard
+      const { api } = await import("@/lib/api");
+      const kids = await api<{ items: unknown[] }>("/children");
+      router.push(kids.items.length === 0 ? "/onboarding" : "/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Falha inesperada.");
     } finally {
@@ -51,6 +64,15 @@ export default function LoginPage() {
             id="password" type="password" value={password} minLength={8}
             onChange={(e) => setPassword(e.target.value)} required
           />
+          {mode === "register" && (
+            <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginTop: 12, fontSize: 13 }}>
+              <input
+                type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)}
+                style={{ minHeight: 24, width: 24 }} aria-label="Consentimento parental"
+              />
+              <span>Sou responsável pelo menor e autorizo o tratamento dos dados da tarefa para organização escolar, conforme a LGPD.</span>
+            </label>
+          )}
           <button className="btn-primary" disabled={busy}>
             {busy ? "Aguarde..." : mode === "login" ? "Entrar" : "Criar conta"}
           </button>

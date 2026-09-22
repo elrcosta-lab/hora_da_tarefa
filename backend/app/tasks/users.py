@@ -19,10 +19,16 @@ class EmailTaken(Exception):
     pass
 
 
+class ConsentRequired(Exception):
+    pass
+
+
 def _to_dict(u: AppUser) -> dict:
     return {"user_id": u.id, "name": u.name, "email": u.email,
             "telegram_user_id": u.telegram_user_id,
-            "link_code": u.telegram_link_code}
+            "link_code": u.telegram_link_code,
+            "lgpd_consent_at": u.lgpd_consent_at.isoformat() if u.lgpd_consent_at else None,
+            "lgpd_consent_version": u.lgpd_consent_version}
 
 
 def get_user(user_id: str) -> dict | None:
@@ -31,9 +37,12 @@ def get_user(user_id: str) -> dict | None:
         return _to_dict(u) if u else None
 
 
-def register(name: str, email: str, password: str) -> dict:
+def register(name: str, email: str, password: str, lgpd_consent: bool = False,
+             lgpd_version: str | None = None) -> dict:
     from app.core.security import hash_password
 
+    if not lgpd_consent:
+        raise ConsentRequired("consentimento parental (LGPD) é obrigatório")
     if not (name or "").strip():
         raise ValueError("name é obrigatório")
     email = (email or "").strip().lower()
@@ -44,7 +53,9 @@ def register(name: str, email: str, password: str) -> dict:
             raise EmailTaken(email)
         u = AppUser(id=str(uuid.uuid4()), name=name.strip(), email=email,
                     password_hash=hash_password(password),
-                    telegram_link_code=_new_code(s))
+                    telegram_link_code=_new_code(s),
+                    lgpd_consent_at=datetime.now(timezone.utc),
+                    lgpd_consent_version=lgpd_version or "termos-v1")
         s.add(u)
         s.flush()
         return _to_dict(u)

@@ -17,6 +17,8 @@ class RegisterIn(BaseModel):
     name: str
     email: str
     password: str
+    lgpd_consent: bool = False
+    lgpd_version: str | None = None
 
 
 class LoginIn(BaseModel):
@@ -43,7 +45,10 @@ def _tokens(user_id: str) -> dict:
 @router.post("/register", status_code=201)
 def register_view(payload: RegisterIn):
     try:
-        user = U.register(payload.name, payload.email, payload.password)
+        user = U.register(payload.name, payload.email, payload.password,
+                          lgpd_consent=payload.lgpd_consent, lgpd_version=payload.lgpd_version)
+    except U.ConsentRequired:
+        return _err("CONSENT_REQUIRED", "É preciso aceitar o consentimento parental (LGPD).", 400)
     except U.EmailTaken:
         return _err("EMAIL_TAKEN", "E-mail já cadastrado.", 409)
     except ValueError as exc:

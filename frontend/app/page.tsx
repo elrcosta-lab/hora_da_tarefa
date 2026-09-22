@@ -74,8 +74,7 @@ export default function DashboardPage() {
     if (!cid && kids.items.length > 0) {
       setChildId(kids.items[0].id);
       return;
-    }
-    setToday(t);
+    }    setToday(t);
     const pend = all.items.filter((i) => i.status === "pendente").length;
     const ag = all.items.filter((i) => i.status === "agendada").length;
     const atr = all.items.filter((i) => i.status === "atrasada").length;
@@ -234,6 +233,13 @@ export default function DashboardPage() {
           </form>
         </div>
         {msg && <p className="muted" role="status">{msg}</p>}
+        {children.length === 0 && (
+          <div className="card" style={{ marginBottom: 16, borderLeft: "4px solid var(--primary)" }}>
+            <strong>Falta pouco! 🎯</strong>
+            <p className="muted">Cadastre seu filho, a grade e o Telegram para começar.</p>
+            <a className="btn-primary" href="/onboarding">Continuar configuração</a>
+          </div>
+        )}
 
         {(reviewing || reviewId) && (
           <div className="card" style={{ marginBottom: 16 }} aria-label="Revisão da extração">

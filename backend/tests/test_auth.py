@@ -34,7 +34,8 @@ def _client():
 
 
 def _register(c, name="Carlos", email="carlos@teste.com", password="senha-forte-123"):
-    r = c.post("/v1/auth/register", json={"name": name, "email": email, "password": password})
+    r = c.post("/v1/auth/register", json={"name": name, "email": email, "password": password,
+                                          "lgpd_consent": True, "lgpd_version": "termos-v1"})
     assert r.status_code == 201, r.text
     return r.json()
 
@@ -61,7 +62,8 @@ def test_register_login_refresh_flow():
 def test_register_duplicate_email_409_and_login_wrong_401():
     c = _client()
     _register(c)
-    r = c.post("/v1/auth/register", json={"name": "X", "email": "carlos@teste.com", "password": "outra-senha-123"})
+    r = c.post("/v1/auth/register", json={"name": "X", "email": "carlos@teste.com", "password": "outra-senha-123",
+                                          "lgpd_consent": True})
     assert r.status_code == 409
     r = c.post("/v1/auth/login", json={"email": "carlos@teste.com", "password": "errada-errada-errada"})
     assert r.status_code == 401
@@ -74,6 +76,20 @@ def test_protected_routes_require_bearer():
     assert c.get("/v1/children").status_code == 401
     assert c.get("/v1/homeworks").status_code == 401
     assert c.get("/v1/notifications").status_code == 401
+
+
+def test_register_requires_lgpd_consent():
+    c = _client()
+    r = c.post("/v1/auth/register", json={"name": "N", "email": "n@teste.com", "password": "senha-forte-123"})
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "CONSENT_REQUIRED"
+    r = c.post("/v1/auth/register", json={"name": "N", "email": "n@teste.com", "password": "senha-forte-123",
+                                          "lgpd_consent": True, "lgpd_version": "termos-v1"})
+    assert r.status_code == 201, r.text
+    from app.tasks import users as U
+
+    stored = U.get_user(r.json()["user_id"])
+    assert stored["lgpd_consent_at"] is not None
 
 
 def test_cross_account_child_is_forbidden():

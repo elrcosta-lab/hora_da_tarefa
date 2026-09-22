@@ -600,6 +600,7 @@ Idempotência: dedupe por `update_id` em tabela/redis (TTL 24h); updates repetid
 | POST | `/notifications/settings` | Preferências (24h/2h on/off, quiet hours) |
 | GET | `/notifications` | Histórico de notificações |
 | POST | `/homeworks/:id/reprocess` | Reenfileira extração IA |
+| PATCH | `/homeworks/:id` | Revisão humana (RF-06): edita subject/title/statement/due_at/estimated_minutes/priority; preencher críticos promove `baixa_confianca` → `ok`; 400 em dado inválido |
 | GET | `/homeworks/today` | Dashboard Hoje: `{date, due_today[], overdue[], scheduled_today[]}` (filtro `child_id`/`date` opcional, escopo por dono) |
 | GET | `/homeworks/export` | CSV UTF-8 (com BOM p/ Excel) com os mesmos filtros de `GET /homeworks` |
 
@@ -1235,6 +1236,7 @@ Funcionalidade: Upload de foto da tarefa
 ### 10.2 Consentimento
 
 - No primeiro login/vínculo Telegram, exibir e registrar `lgpd_consent_at` + `lgpd_consent_version`.
+- `POST /v1/auth/register` exige `lgpd_consent: true` (400 `CONSENT_REQUIRED` sem); grava timestamp + versão (migração `0005`, RF-01). Web exibe checkbox parental obrigatório.
 - Termo em PT-BR acessível; revogação exclui imagens e anonimiza histórico.
 
 ### 10.3 Retenção de imagens

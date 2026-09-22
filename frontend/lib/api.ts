@@ -78,7 +78,7 @@ export async function register(name: string, email: string, password: string) {
   const r = await fetch(`${API}/v1/auth/register`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({ name, email, password, lgpd_consent: true, lgpd_version: "termos-v1" }),
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
