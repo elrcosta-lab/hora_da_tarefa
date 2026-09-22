@@ -109,6 +109,34 @@ def _render_start(name: str, code: str) -> str:
     )
 
 
+RESTRICTED_MSG = (
+    "🔒 Acesso restrito a usuários cadastrados na plataforma.\n"
+    "Peça seu código de vínculo de 6 dígitos e envie aqui (ou /start <código>)."
+)
+
+
+def _resolve_user(telegram_user_id: int) -> dict | None:
+    from app.tasks import users as U
+
+    try:
+        return U.get_by_telegram_id(telegram_user_id)
+    except Exception:
+        return None
+
+
+def _try_link(chat_id: int, telegram_user_id: int, code: str) -> bool:
+    from app.tasks import users as U
+
+    try:
+        user = U.link_telegram(code, telegram_user_id)
+    except Exception:
+        return False
+    if user is None:
+        return False
+    _send(chat_id, f"Conta vinculada com sucesso, {user['name']}! ✅ Agora envie a foto da tarefa.")
+    return True
+
+
 def handle_update(update: dict) -> dict:
     """Processa um Update do Telegram. Sempre retorna {ok, ...} (nunca levanta)."""
     from app.tasks.extract import get_or_create_homework, list_homeworks
@@ -120,10 +148,14 @@ def handle_update(update: dict) -> dict:
         return {"ok": True, "deduplicated": True}
     _SEEN.add(update_id)
 
-    # callback_query (botões inline)
+    # callback_query (botões inline) — exige vínculo
     cb = update.get("callback_query")
     if cb:
         chat_id = (cb.get("message") or {}).get("chat", {}).get("id") or cb.get("from", {}).get("id")
+        cb_user = (cb.get("from") or {}).get("id")
+        if cb_user is None or _resolve_user(cb_user) is None:
+            _send(chat_id, RESTRICTED_MSG)
+            return {"ok": True, "restricted": True}
         data = cb.get("data", "")
         if data.startswith("concluir:"):
             hid = data.split(":", 1)[1]
@@ -153,9 +185,36 @@ def handle_update(update: dict) -> dict:
     chat = message.get("chat", {})
     chat_id = chat.get("id")
     from_user = message.get("from", {})
+    telegram_user_id = from_user.get("id")
     name = from_user.get("first_name") or from_user.get("username") or "responsável"
     if chat_id is None:
         return {"ok": True}
+
+    text = (message.get("text") or "").strip()
+
+    # pareamento: código puro ou /start <código> funcionam mesmo sem vínculo
+    code_candidate = None
+    if text.startswith("/start"):
+        parts = text.split()
+        if len(parts) > 1 and parts[1].isdigit():
+            code_candidate = parts[1]
+    elif text.isdigit() and len(text) == 6:
+        code_candidate = text
+    if code_candidate and telegram_user_id is not None:
+        if _try_link(chat_id, telegram_user_id, code_candidate):
+            return {"ok": True, "linked": True}
+        _send(chat_id, "Código inválido ou já utilizado. Peça um novo código na plataforma.")
+        return {"ok": True}
+
+    # gate: só telegram_user_id vinculados passam daqui
+    if telegram_user_id is None or _resolve_user(telegram_user_id) is None:
+        if text.startswith("/start"):
+            _send(chat_id,
+                  f"Olá, {name}! 👋 Eu sou o Hora da Tarefa.\n"
+                  f"Envie seu código de vínculo de 6 dígitos aqui (ou /start <código>).")
+        else:
+            _send(chat_id, RESTRICTED_MSG)
+        return {"ok": True, "restricted": True}
 
     # foto → upload (RF-04)
     if message.get("photo"):
@@ -170,7 +229,6 @@ def handle_update(update: dict) -> dict:
             _send(chat_id, "Recebi! Analisando... status: processando. ⏳")
         return {"ok": True, "homework_id": rec["homework_id"], "deduplicated": dedup}
 
-    text = (message.get("text") or "").strip()
     if text.startswith("/start"):
         _send(chat_id, _render_start(name, _link_code(chat_id)))
         return {"ok": True}

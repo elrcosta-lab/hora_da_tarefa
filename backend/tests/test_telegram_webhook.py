@@ -1,12 +1,8 @@
-"""TDD RED — Bot Telegram webhook (SPECS §6 + §3.10, RF-08).
+"""Bot Telegram webhook (SPECS §6 + §3.10, RF-08) — ACESSO RESTRITO a vinculados.
 
-Contrato MVP (sem aiogram, webhook puro):
-- POST /v1/telegram/webhook exige X-Telegram-Bot-Api-Secret-Token == TELEGRAM_WEBHOOK_SECRET (401 se inválido)
-- idempotência por update_id (replay → {"ok": true, "deduplicated": true}, sem duplicar tarefa)
-- /start → boas-vindas com link_code quando sem vínculo
-- foto (message.photo) → cria homework + responde "processando"
-- /hoje → agenda do dia; /tarefas → ativas; /concluir <id> → concluída
-- callback concluir:<homework_id> → concluída
+- POST /v1/telegram/webhook exige secret (401 se inválido)
+- idempotência por update_id; sem vínculo → mensagem restrita, nada criado
+- chats dos testes são vinculados via app.tasks.users antes de cada cenário
 """
 import uuid
 
@@ -19,16 +15,30 @@ def _clean(monkeypatch):
     monkeypatch.setenv("TELEGRAM_WEBHOOK_SECRET", "test-secret")
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "test-token")
     from app.tasks import routine as R
+    from app.tasks import users as U
     from app.tasks.extract import clear_store
     from app.bot import handlers as H
 
     R.clear_routine()
+    U.clear_users()
     clear_store()
     H.clear_bot()
     yield
     R.clear_routine()
+    U.clear_users()
     clear_store()
     H.clear_bot()
+
+
+def _link(chat_id: int, name: str = "Teste") -> dict:
+    """Vincula o chat id diretamente (atalho de teste p/ o fluxo de código)."""
+    from app.tasks import users as U
+
+    u = U.create_user(name)
+    code = u["link_code"]
+    linked = U.link_telegram(code, chat_id)
+    assert linked is not None
+    return linked
 
 
 def _client():
@@ -64,6 +74,7 @@ def test_start_returns_welcome_with_link_code():
 
 
 def test_photo_upload_creates_homework_and_replies_processando():
+    _link(7)
     c = _client()
     # foto sem file_bytes usa bytes JPEG válidos embutidos pelo handler de teste
     r = c.post("/v1/telegram/webhook", headers=_headers(), json={
@@ -82,6 +93,7 @@ def test_photo_upload_creates_homework_and_replies_processando():
 
 
 def test_dedupe_same_update_id_ignored():
+    _link(9)
     c = _client()
     payload = {"update_id": 30,
                "message": {"message_id": 3, "from": {"id": 9}, "chat": {"id": 9}, "text": "/hoje"}}
@@ -96,6 +108,7 @@ def test_dedupe_same_update_id_ignored():
 
 
 def test_concluir_command_updates_status():
+    _link(11)
     c = _client()
     from app.tasks import routine as R
     from app.tasks.extract import get_homework

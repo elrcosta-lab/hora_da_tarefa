@@ -593,7 +593,7 @@ Idempotência: dedupe por `update_id` em tabela/redis (TTL 24h); updates repetid
 
 | Método | Rota | Descrição |
 |---|---|---|
-| POST | `/auth/telegram/link` | Gera `telegram_link_code` para vincular conta |
+| POST | `/auth/telegram/link` | Gera `telegram_link_code` (6 dígitos, single-use) para vincular conta — `{name}` cria usuário (201) ou `{user_id}` regenera código (200); consumo no chat vincula `telegram_user_id` (gate §6.1) |
 | GET | `/children` | Lista crianças do usuário |
 | POST | `/children` | Cria criança |
 | GET | `/children/:id/agenda` | Grade + atividades + slots ocupados |
@@ -912,6 +912,7 @@ AI_JPEG_QUALITY=82
 - **Produção:** webhook (`POST /v1/telegram/webhook`) atrás do Caddy com TLS; `secret_token` do Telegram validado.
 - **Desenvolvimento/local:** polling via `aiogram` (`RUN_MODE=polling`), útil na VPS sem domínio.
 - **Idempotência:** dedupe por `update_id` (Redis SET NX, TTL 24 h); reenvio do Telegram não duplica ação.
+- **Gate de acesso (obrigatório):** somente `telegram_user_id` vinculados acessam o bot. Pareamento via `POST /v1/auth/telegram/link` (gera código de 6 dígitos single-use) consumido no chat como código puro ou `/start <código>`. Sem vínculo: qualquer comando/foto/callback recebe mensagem de acesso restrito e **nada é criado nem listado** (sem vazamento de dados entre responsáveis). Tabela `app_user` (migração `0003`).
 
 ### 6.2 Comandos e handlers
 
