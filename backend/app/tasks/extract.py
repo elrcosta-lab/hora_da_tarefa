@@ -183,3 +183,74 @@ def mark_overdue(now: str | None = None) -> list[str]:
         except Exception:
             continue
     return marked
+
+
+# --- Sugestões (SPECS §3.8 §3.9, RF-05/RF-06) ---
+def _parse_due(due, tz):
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    tzinfo = ZoneInfo("America/Sao_Paulo") if tz is None else tz
+    if due is None:
+        return None
+    s = str(due)
+    try:
+        if len(s) == 10:  # YYYY-MM-DD → 23:59 local
+            return _dt(int(s[0:4]), int(s[5:7]), int(s[8:10]), 23, 59, tzinfo=tzinfo)
+        dt = _dt.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=tzinfo)
+        return dt
+    except Exception:
+        return None
+
+
+def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, activities=None) -> list[dict]:
+    """Calcula slots via scheduling.suggest_slots e serializa p/ API. Levanta KeyError se inexistente."""
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    from app.services.scheduling import suggest_slots
+
+    rec = _HOMEWORKS.get(homework_id)
+    if rec is None:
+        raise KeyError(homework_id)
+    tz = ZoneInfo("America/Sao_Paulo")
+    now = now or _dt.now(tz)
+    due = _parse_due(rec.get("due_at"), tz) or (now + __import__("datetime").timedelta(days=7))
+    hw = {
+        "due_at": due,
+        "estimated_minutes": int(rec.get("estimated_minutes") or 30),
+        "priority": int(rec.get("priority") or 1),
+        "subject": rec.get("subject") or "Outro",
+    }
+    slots = suggest_slots(hw, schedules=schedules or [], activities=activities or [], now=now, limit=limit)
+    return [
+        {
+            "rank": s["rank"],
+            "start_at": s["start_at"].isoformat(),
+            "end_at": s["end_at"].isoformat(),
+            "score": s["score"],
+            "reason": s["reason"],
+        }
+        for s in slots
+    ]
+
+
+def accept_suggestion(homework_id: str, start_at_iso: str) -> dict:
+    """Agenda o slot escolhido (deve estar entre as sugestões atuais)."""
+    rec = _HOMEWORKS.get(homework_id)
+    if rec is None:
+        raise KeyError(homework_id)
+    try:
+        suggestions = get_suggestions(homework_id, limit=5)
+    except KeyError:
+        raise
+    match = next((s for s in suggestions if s["start_at"] == start_at_iso), None)
+    if match is None:
+        raise StatusConflict(rec.get("status", "pendente"), f"slot:{start_at_iso}")
+    rec["scheduled_start"] = match["start_at"]
+    rec["scheduled_end"] = match["end_at"]
+    if rec.get("status") == "pendente":
+        transition_homework(homework_id, "agendada")
+    return rec

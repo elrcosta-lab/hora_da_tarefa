@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from app.tasks.extract import (
     StatusConflict,
+    accept_suggestion,
     detect_mime,
     get_homework,
     get_or_create_homework,
@@ -122,3 +123,28 @@ def patch_homework_status(homework_id: str, payload: StatusPatch):
             details={"current": exc.current, "attempted": exc.attempted, "allowed": exc.allowed},
         )
     return {"id": rec["homework_id"], "status": rec["status"], "updated_at": rec.get("updated_at")}
+
+
+class AcceptPayload(BaseModel):
+    start_at: str
+
+
+@router.post("/{homework_id}/accept", status_code=200)
+def accept_homework_view(homework_id: str, payload: AcceptPayload):
+    if get_homework(homework_id) is None:
+        return _error("HOMEWORK_NOT_FOUND", "Tarefa não encontrada.", 404)
+    try:
+        rec = accept_suggestion(homework_id, payload.start_at)
+    except StatusConflict as exc:
+        return _error(
+            "STATUS_CONFLICT",
+            "Slot inválido ou fora das sugestões atuais.",
+            409,
+            details={"current": exc.current, "attempted": exc.attempted, "allowed": exc.allowed},
+        )
+    return {
+        "homework_id": rec["homework_id"],
+        "status": rec["status"],
+        "scheduled_start": rec.get("scheduled_start"),
+        "scheduled_end": rec.get("scheduled_end"),
+    }
