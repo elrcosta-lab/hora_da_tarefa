@@ -111,6 +111,12 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
             "extraction_json": result.model_dump(),
         }
     )
+    try:
+        from app.tasks import notify as _N
+
+        _N.schedule_for_homework(homework_id)
+    except Exception:
+        pass
     return rec
 
 
@@ -279,4 +285,10 @@ def accept_suggestion(homework_id: str, start_at_iso: str) -> dict:
     rec["scheduled_end"] = match["end_at"]
     if rec.get("status") == "pendente":
         transition_homework(homework_id, "agendada")
+    try:
+        from app.tasks import notify as _N
+
+        _N.schedule_for_homework(homework_id)
+    except Exception:
+        pass
     return rec
