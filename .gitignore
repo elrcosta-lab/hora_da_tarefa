@@ -81,14 +81,15 @@ tests/fixtures/live/
 openrouter_cache/
 
 # --- Modelos IA locais (LEGADO v1.0 - removidos no MVP OpenRouter, mantidos p/ fallback offline futuro) ---
+# NOTA: padrões ancorados na raiz (/) para NÃO ignorar backend/app/models/ (SQLAlchemy)
 *.gguf
 *.ggml
 *.bin
 *.onnx
 *.pt
 *.safetensors
-models/
-ai/models/
+/models/
+/ai/models/
 ollama/
 !ai/models/.gitkeep
 

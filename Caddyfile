@@ -1,0 +1,10 @@
+# Hora da Tarefa — Caddy (TLS automático). Ajuste o domínio em prod.
+# Dev local: http://localhost:8000 direto na api (sem TLS).
+
+{
+	auto_https off
+}
+
+:80 {
+	reverse_proxy api:8000
+}
