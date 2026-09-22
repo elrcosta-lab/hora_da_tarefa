@@ -94,6 +94,26 @@ def test_photo_download_success_creates_homework_and_owner():
     assert len(list_homeworks()) == 1
 
 
+def test_photo_oversize_rejected_without_creating():
+    import base64
+
+    _link(605)
+    c = _client()
+    from app.bot.handlers import last_sent
+    from app.tasks.extract import list_homeworks
+
+    big = base64.b64encode(b"x" * (11 * 1024 * 1024)).decode()
+    r = c.post("/v1/telegram/webhook", headers=_headers(), json={
+        "update_id": 203,
+        "message": {"message_id": 1, "from": {"id": 605}, "chat": {"id": 605},
+                    "photo": [{"file_id": "huge"}], "test_bytes_b64": big},
+    })
+    assert r.status_code == 200
+    assert r.json().get("too_large") is True
+    assert list_homeworks() == []
+    assert "grande" in (last_sent(605) or "").lower()
+
+
 def test_live_flush_calls_send_message(monkeypatch):
     import app.bot.handlers as H
 

@@ -227,6 +227,7 @@ def handle_update(update: dict) -> dict:
 
     # foto → upload (RF-04): download real via getFile; falha → erro, nada criado
     if message.get("photo"):
+        from app.api.homeworks import MAX_BYTES
         from app.bot import telegram_api as _tg
         from app.core.config import get_settings as _get_settings
 
@@ -235,6 +236,9 @@ def handle_update(update: dict) -> dict:
         except Exception:
             _send(chat_id, "Não consegui baixar a foto. Tente enviar novamente. 📷")
             return {"ok": True, "download_failed": True}
+        if len(image_bytes) > MAX_BYTES:
+            _send(chat_id, "Foto muito grande (máx. 10 MB). Tente com menos resolução. 📷")
+            return {"ok": True, "too_large": True}
         user = _resolve_user(telegram_user_id)
         child = _ensure_child((user or {}).get("user_id"))
         rec, dedup = get_or_create_homework(
