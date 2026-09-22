@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core.security import create_tokens, decode_token, get_current_user_id
+from app.core.ratelimit import limit
 from app.tasks import users as U
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
@@ -42,7 +43,8 @@ def _tokens(user_id: str) -> dict:
     return create_tokens(user_id, s.JWT_SECRET, s.JWT_EXPIRE_MINUTES, s.REFRESH_EXPIRE_DAYS)
 
 
-@router.post("/register", status_code=201)
+@router.post("/register", status_code=201,
+               dependencies=[Depends(limit(10, 3600, key="ip", prefix="reg"))])
 def register_view(payload: RegisterIn):
     try:
         user = U.register(payload.name, payload.email, payload.password,
@@ -56,7 +58,8 @@ def register_view(payload: RegisterIn):
     return {"user_id": user["user_id"], "name": user["name"], "email": user["email"]}
 
 
-@router.post("/login", status_code=200)
+@router.post("/login", status_code=200,
+               dependencies=[Depends(limit(10, 900, key="login", prefix="login"))])
 def login_view(payload: LoginIn):
     user = U.authenticate(payload.email, payload.password)
     if user is None:

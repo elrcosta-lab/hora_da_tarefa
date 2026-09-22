@@ -1,9 +1,10 @@
 """Webhook do Telegram (SPECS §3.10 + §6 v1.1)."""
-from fastapi import APIRouter, BackgroundTasks, Header, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, Request
 from fastapi.responses import JSONResponse
 
 from app.bot.handlers import drain_outbox, handle_update
 from app.core.config import get_settings
+from app.core.ratelimit import limit
 
 router = APIRouter(prefix="/v1/telegram", tags=["telegram"])
 
@@ -25,7 +26,8 @@ def flush_outbox_to_telegram() -> int:
     return sent
 
 
-@router.post("/webhook", status_code=200)
+@router.post("/webhook", status_code=200,
+               dependencies=[Depends(limit(120, 60, key="ip", prefix="tg"))])
 async def telegram_webhook(
     request: Request,
     background: BackgroundTasks,

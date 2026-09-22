@@ -21,9 +21,13 @@ from app.core.db import init_db, reset_db  # noqa: E402
 def _db():
     import shutil
 
+    from app.core.ratelimit import get_limiter
+
+    get_limiter().reset()
     init_db()
     yield
     reset_db()
+    get_limiter().reset()
     shutil.rmtree(os.environ["STORAGE_LOCAL_DIR"], ignore_errors=True)
 
 

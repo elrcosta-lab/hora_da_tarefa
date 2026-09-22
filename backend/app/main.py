@@ -12,6 +12,7 @@ from app.api.notifications import router as notifications_router
 from app.api.suggestions import router as suggestions_router
 from app.api.telegram import router as telegram_router
 from app.core.security import Unauthorized
+from app.core.ratelimit import RateLimited, get_limiter, global_limit
 from fastapi.responses import JSONResponse
 
 
@@ -46,6 +47,28 @@ app.add_middleware(
 async def _unauthorized_handler(request, exc: Unauthorized):
     return JSONResponse(status_code=401, content={
         "error": {"code": "UNAUTHORIZED", "message": str(exc) or "Não autenticado.", "details": {}}})
+
+
+@app.exception_handler(RateLimited)
+async def _ratelimited_handler(request, exc: RateLimited):
+    return JSONResponse(status_code=429, content={
+        "error": {"code": "RATE_LIMITED", "message": "Limite de requisições excedido.", "details": {}}},
+        headers={"Retry-After": str(exc.retry_after)})
+
+
+@app.middleware("http")
+async def _global_rate_limit(request, call_next):
+    if request.url.path.startswith("/v1/"):
+        from app.core.ratelimit import _user_sub
+
+        per_min, window = global_limit()
+        allowed, retry = get_limiter().hit(f"rl:global:{_user_sub(request)}", per_min, window)
+        if not allowed:
+            return JSONResponse(status_code=429, content={
+                "error": {"code": "RATE_LIMITED", "message": "Limite de requisições excedido.",
+                          "details": {}}},
+                headers={"Retry-After": str(retry)})
+    return await call_next(request)
 
 app.include_router(auth_router)
 app.include_router(children_router)

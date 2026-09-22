@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core.security import get_current_user_id
+from app.core.ratelimit import limit
 from app.tasks import routine as R
 from app.tasks.extract import (
     StatusConflict,
@@ -44,7 +45,9 @@ def _owned_or_error(homework_id: str, owner: str):
     return None
 
 
-@router.post("/upload", status_code=202)
+@router.post("/upload", status_code=202,
+               dependencies=[Depends(limit(20, 3600, key="user", prefix="up-hour")),
+                             Depends(limit(5, 60, key="user", prefix="up-min"))])
 async def upload_homework(
     background: BackgroundTasks,
     file: UploadFile = File(...),
