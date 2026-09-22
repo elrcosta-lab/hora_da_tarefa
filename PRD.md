@@ -1,7 +1,7 @@
 # PRD — Hora da Tarefa
 
 > **Status:** Rascunho
-> **Versão:** 1.0
+> **Versão:** 1.1 (OpenRouter)
 > **Última atualização:** 2026-09-22
 > **Responsável:** Product Owner (a definir)
 > **Classificação:** Documento de requisitos de produto (PRD)
@@ -12,9 +12,9 @@
 
 ### 1.1 Resumo Executivo
 
-O **Hora da Tarefa** é um SaaS que ajuda pais e responsáveis a organizar a lição de casa dos filhos de ponta a ponta. O responsável envia uma foto da tarefa (caderno, agenda ou bilhete escolar) via app web ou Telegram; um modelo de linguagem pequeno (VLM/LLM quantizado) rodando em container na própria VPS faz OCR e extrai data de envio, data de entrega, matéria e enunciado. O sistema cruza essas informações com a grade escolar e as atividades extraescolares da criança para sugerir automaticamente o melhor dia e horário livre, e então dispara lembretes e cobranças de conclusão via bot do Telegram.
+O **Hora da Tarefa** é um SaaS que ajuda pais e responsáveis a organizar a lição de casa dos filhos de ponta a ponta. O responsável envia uma foto da tarefa (caderno, agenda ou bilhete escolar) via app web ou Telegram; o modelo multimodal `google/gemma-4-26b-a4b-it:free` via API OpenRouter (OpenAI-compatible, `https://openrouter.ai/api/v1`) recebe imagem + texto e extrai data de envio, data de entrega, matéria e enunciado em JSON validado. O sistema cruza essas informações com a grade escolar e as atividades extraescolares da criança para sugerir automaticamente o melhor dia e horário livre, e então dispara lembretes e cobranças de conclusão via bot do Telegram.
 
-O valor central é **transformar uma foto desorganizada em um compromisso agendado, lembrado e concluído** — sem planilhas, sem esquecimentos e sem custo de API de IA por imagem.
+O valor central é **transformar uma foto desorganizada em um compromisso agendado, lembrado e concluído** — sem planilhas, sem esquecimentos e sem custo de IA (tier gratuito OpenRouter, sem VLM local na VPS).
 
 ### 1.2 Problema
 
@@ -23,17 +23,17 @@ Pais e responsáveis enfrentam diariamente:
 - **Fragmentação da informação:** a lição chega por caderno, agenda de papel, bilhete, grupo de WhatsApp da escola e fala do filho — nunca em um só lugar.
 - **Falta de contexto de tempo:** mesmo sabendo da tarefa, o responsável não sabe *quando* a criança terá tempo livre, considerando aula, natação, inglês, terapia e sono.
 - **Esquecimento e atraso:** entregas perdidas geram cobrança da escola e conflito familiar.
-- **Custo de ferramentas de IA:** soluções que usam APIs de visão (GPT-4o, Gemini Pro) cobram por imagem e por token, inviabilizando preço popular no Brasil.
+- **Custo de ferramentas de IA:** soluções que usam APIs de visão pagas (GPT-4o, Gemini Pro) cobram por imagem e por token, inviabilizando preço popular no Brasil. O MVP usa o tier gratuito OpenRouter (`google/gemma-4-26b-a4b-it:free`, multimodal texto+imagem, 262k contexto), com custo marginal zero e rate limit gerenciado por fila + retry.
 - **Sobrecarga cognitiva:** a "gestão da lição de casa" hoje é feita de memória e boa vontade, sem sistema de acompanhamento nem histórico.
 
-**Por que agora:** modelos de visão pequenos e quantizados (SmolVLM2, Moondream2, Qwen2-VL-2B) tornaram-se viáveis em CPU (1 vCPU / 4GB RAM), permitindo OCR + extração semântica local, com privacidade dos dados de menores e custo marginal quase zero.
+**Por que agora:** modelos multimodais gratuitos via OpenRouter (Gemma 4 26B MoE, 3.8B ativos/token, Apache 2.0) entregam OCR + extração semântica direto da imagem via API, sem precisar de GPU/VPS parruda. Isso elimina a complexidade de VLM quantizado local (SmolVLM2, Moondream2, Qwen2-VL-2B em CPU) e libera a VPS de 1 vCPU / 4GB para só API + banco + fila. Privacidade é tratada por anonimização pré-envio (redimensionar ≤1600px, remover EXIF, hash SHA-256, sem PII em logs).
 
 ### 1.3 Solução Proposta
 
 Um fluxo em quatro etapas:
 
 1. **Entrada por foto** — responsável envia imagem no Telegram (ou web upload).
-2. **Extração local por IA** — pipeline OCR (Tesseract) + VLM/LLM pequeno quantizado extrai campos estruturados em JSON.
+2. **Extração via OpenRouter** — anonimização local (resize, strip EXIF, hash) + chamada multimodal ao `google/gemma-4-26b-a4b-it:free` que devolve **JSON validado por schema** (sem OCR/VLM local).
 3. **Motor de agendamento** — cruza matéria, prazo e disponibilidade da criança (grade escolar + atividades fixas + sono + deslocamento) e calcula o(s) slot(s) livres com folga.
 4. **Orquestração por Telegram** — confirma o agendamento, envia lembretes (24h/2h antes) e coleta a confirmação de conclusão, alimentando um dashboard de status.
 
@@ -44,8 +44,8 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 - **Objetivo 1:** Reduzir o tempo de registro de uma tarefa de ~3 minutos (digitação) para **≤ 30 segundos** (foto + confirmação).
 - **Objetivo 2:** Atingir **≥ 85% de precisão** de extração automática nos campos críticos (data de entrega e matéria), com revisão humana no restante.
 - **Objetivo 3:** Reduzir a taxa de tarefas atrasadas em **≥ 40%** nos primeiros 60 dias de uso por família ativa.
-- **Objetivo 4:** Operar o núcleo de IA a **custo marginal ≤ R$ 0,01 por imagem processada** (processamento local), sem depender de API paga.
-- **Objetivo 5:** Manter o stack completo rodando em **1 vCPU / 4GB RAM / 50GB disco**.
+- **Objetivo 4:** Operar o núcleo de IA a **custo marginal R$ 0,00 por imagem** (tier gratuito OpenRouter `google/gemma-4-26b-a4b-it:free`), sem VLM local. Respeitar rate limit do tier free com fila + backoff + cache por hash.
+- **Objetivo 5:** Manter o stack completo rodando em **1 vCPU / 4GB RAM / 50GB disco** (sem carga de IA local — só API, Postgres, Redis, bot).
 
 ### 1.5 Não-Objetivos (Out of Scope estratégico)
 
@@ -220,16 +220,17 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 - Upload válido retorna `task_id` e estado `pending_extraction`.
 - Upload inválido (tipo/tamanho) é rejeitado com código de erro específico.
 
-### RF-05 — Pipeline OCR + Extração por VLM/LLM (M)
+### RF-05 — Pipeline Extração via OpenRouter (M)
 
-**Descrição:** Processar a imagem para extrair campos estruturados: `data_envio`, `data_entrega` (quando visível), `materia`, `enunciado`, `professor` (opcional), `confianca` por campo.
+**Descrição:** Processar a imagem para extrair campos estruturados: `data_envio`, `data_entrega` (quando visível), `materia`, `enunciado`, `professor` (opcional), `confianca` por campo — via API OpenRouter modelo `google/gemma-4-26b-a4b-it:free` (multimodal imagem+texto, 262k contexto, structured output).
 
 **Regras:**
-- Etapa 1: **Tesseract OCR** em modo pt-BR extrai texto bruto.
-- Etapa 2: **VLM pequeno quantizado** (ver §6) recebe imagem + texto OCR e devolve **JSON validado por schema** (Pydantic/JSON Schema).
+- Etapa 1: **Anonimização local** — valida MIME por magic bytes, auto-orienta EXIF e remove EXIF, redimensiona para máx. 1600px lado maior, converte para JPEG otimizado, calcula SHA-256 para deduplicação/cache (não reprocessa hash igual).
+- Etapa 2: **Chamada OpenRouter** — `POST https://openrouter.ai/api/v1/chat/completions` com `model=google/gemma-4-26b-a4b-it:free`, mensagens `[{role:user, content:[{type:text, text:prompt},{type:image_url, image_url:{url:data:image/jpeg;base64,...}}]}]`, `response_format={type:json_object}`, `max_tokens=2048`, `temperature=0.1`. Headers `Authorization: Bearer $OPENROUTER_API_KEY`, `HTTP-Referer`, `X-Title`.
 - Se `confianca < 0.75` em campo crítico (data_entrega ou materia) → estado `needs_review`.
 - Normalização de datas relativas ("amanhã", "sexta") com base na data de envio.
-- Timeout do worker: 90s; ao exceder, marca `extraction_failed` e oferece entrada manual.
+- Timeout da chamada: 60s com retry 1× + backoff; rate limit 429 do tier free → reenfileira com backoff exponencial (1/5/30 min, máx. 3 tentativas); ao exceder, marca `extraction_failed` e oferece entrada manual.
+- Sem VLM/LLM local, sem Ollama/llama.cpp, sem Tesseract/PaddleOCR no caminho crítico (OCR local opcional apenas como fallback futuro).
 
 **Critérios de aceite:**
 - Saída sempre em JSON válido conforme schema; falha de parse nunca derruba o worker.
@@ -355,17 +356,17 @@ pending_extraction → needs_review → agendada → em_andamento
 
 | ID | Categoria | Requisito | Critério de Aceitação |
 |----|-----------|-----------|----------------------|
-| RNF-01 | Performance | Extração de tarefa (foto → JSON) | P50 ≤ 25s, P95 ≤ 60s em 1 vCPU; timeout 90s |
+| RNF-01 | Performance | Extração de tarefa (foto → JSON via OpenRouter) | P50 ≤ 15s, P95 ≤ 45s; timeout 60s + 1 retry; backoff 1/5/30 min em 429 |
 | RNF-02 | Performance | Resposta da API (consultas/CRUD) | P95 < 800ms (excluindo extração) |
-| RNF-03 | Performance | Processamento concorrente de extração | Fila serializada; no máx. 1 job de VLM por vez na VPS |
-| RNF-04 | Custo | Custo de IA por imagem | ≤ R$ 0,01 (local); API externa só como fallback pago opcional |
+| RNF-03 | Performance | Processamento concorrente de extração | Fila I/O-bound; concorrência 3–5; dedupe por SHA-256 (sem reprocessar) |
+| RNF-04 | Custo | Custo de IA por imagem | R$ 0,00 (tier free OpenRouter); sem custo de infra GPU; monitorar rate limit e uso mensal |
 | RNF-05 | Disponibilidade | Uptime do núcleo (bot + API) | ≥ 99,0% mensal, excluindo janelas de manutenção |
 | RNF-06 | Segurança | Autenticação e autorização | Hash de senha (Argon2id) ou OAuth; autorização validada no servidor; sessão expira em 30 dias |
 | RNF-07 | Segurança | Isolamento de dados de menor | Criptografia em repouso de imagens e dados sensíveis; acesso por escopo de conta/criança |
 | RNF-08 | Privacidade/LGPD | Tratamento de dados de menores | Consentimento parental registrado; base legal documentada; dados minimizados; direito de exclusão em ≤ 30 dias |
 | RNF-09 | Privacidade | Retenção de imagens | Imagem original retida 90 dias por padrão (configurável); exclusão automática ao final |
-| RNF-10 | Escalabilidade | Capacidade inicial | ≥ 200 famílias ativas e ≥ 3.000 tarefas/mês em 1 VPS; arquitetura permite migrar IA para GPU/worker dedicado |
-| RNF-11 | Observabilidade | Logs e métricas | Logs estruturados + métricas de fila, tempo de extração, taxa de rejeição OCR |
+| RNF-10 | Escalabilidade | Capacidade inicial | ≥ 200 famílias ativas e ≥ 3.000 tarefas/mês em 1 VPS; sem gargalo de IA local (rate limit OpenRouter gerenciado) |
+| RNF-11 | Observabilidade | Logs e métricas | Logs estruturados + métricas de fila, latência OpenRouter, tokens, taxa de `needs_review` (sem PII/imagem em logs) |
 | RNF-12 | Confiabilidade | Processamento de webhooks | Idempotência por `update_id`; retentativa com backoff em falha de envio |
 | RNF-13 | Acessibilidade | App web | WCAG 2.1 Nível AA nos fluxos principais; alvos de toque ≥ 44px |
 | RNF-14 | Internacionalização | Idioma/formatos | MVP PT-BR, `America/Sao_Paulo`; formatação de data local |
@@ -380,43 +381,35 @@ pending_extraction → needs_review → agendada → em_andamento
 
 - **VPS:** 1 vCPU, 4 GB RAM, 50 GB disco, 4 TB de banda.
 - **Execução:** todos os serviços em **containers Docker** (Docker Compose no MVP).
-- Consequência: IA de visão deve ser **pequena, quantizada e CPU-friendly**; jobs de IA rodam de forma **serializada** para não estourar RAM/CPU.
+- **IA 100% via API:** nenhuma inferência local — sem Ollama, llama.cpp, Tesseract/PaddleOCR ou modelos `.gguf` na VPS. Worker de IA é leve (~200 MB, só HTTP + Pillow). Consequência: fila pode ter concorrência 3–5 sem estourar RAM; gargalo passa a ser rate limit do tier free OpenRouter (gerenciado com backoff + cache por hash).
 
-### 6.2 Componentes e orçamento de recursos (alvo)
+### 6.2 Componentes e orçamento de recursos (alvo — sem IA local)
 
-| Componente | Tecnologia sugerida | RAM alvo | Observação |
+| Componente | Tecnologia | RAM alvo | Observação |
 |---|---|---|---|
-| API/Backend | Python (FastAPI) ou Node (NestJS) | ~250–400 MB | Stateless, horizontalizável no futuro |
+| API/Backend | Python (FastAPI) | ~250–400 MB | Stateless, inclui cliente OpenRouter (OpenAI SDK com `base_url=https://openrouter.ai/api/v1`) |
 | Banco | PostgreSQL 16 (SQLite permitido no dev) | ~150–300 MB | `pgvector` opcional pós-MVP |
-| Cache/Fila | Redis 7 (ou fila em Postgres) | ~80–150 MB | Fila de extração e rate limiting |
-| OCR | Tesseract 5 (`por`+`eng`) | ~100–200 MB/job | Pré-processamento: grayscale, deskew, binarização |
-| VLM/LLM | Modelo quantizado (ver 6.3) | ~1,5–2,5 GB | Carregado sob demanda, descarregado após ociosidade |
+| Cache/Fila | Redis 7 (ou fila em Postgres) | ~80–150 MB | Fila de extração (concorrência 3–5), rate limiting, cache por SHA-256, dedupe Telegram |
+| Pré-processamento imagem | Pillow (resize, strip EXIF, JPEG) | ~50–100 MB/job | Sem OCR/VLM local; máx. 1600px, JPEG q=82 |
+| VLM/LLM | **OpenRouter `google/gemma-4-26b-a4b-it:free`** | 0 MB na VPS (API externa) | Multimodal texto+imagem, 262k contexto, 32k saída, structured output, custo zero |
 | Bot | Worker Python (python-telegram-bot) | ~100 MB | Long polling ou webhook |
 | Reverse proxy | Caddy/Nginx | ~50 MB | TLS automático |
 
-**Estratégia de memória:** carregar o modelo apenas durante um job e liberar após N segundos de ociosidade (`keep_alive=0` em runtimes Ollama-like), evitando swap em 4 GB.
+**Total pico ≈1.1 GB** — folga confortável em 4 GB. Sem swap/OOM de IA. Sem download de modelos.
 
-### 6.3 Opções de modelos pequenos (trade-offs)
+### 6.3 Modelo — OpenRouter Gemma 4 (substitui IA local)
 
-| Modelo | Params | Tarefa ideal | RAM (Q4) aprox. | Prós | Contras |
-|---|---|---|---|---|---|
-| **SmolVLM2-256M/500M** | 0.25–0.5B | VLM leve p/ descrição de imagem | 0,6–1,2 GB | Muito leve, multimodal nativo | Menor precisão em texto denso |
-| **Moondream2** | ~1.9B | VLM de visão-linguagem compacto | 1,5–2,0 GB | Boa relação tamanho/precisão p/ OCR de cena | Texto manuscrito fraco |
-| **Qwen2-VL-2B (Q4)** | 2B | VLM com bom OCR e JSON | ~1,8–2,4 GB | Forte em documento/JSON estruturado | Mais pesado |
-| **Llama 3.2 1B (Q4)** | 1B | Refinamento/parsing de texto (pós-OCR) | ~0,8–1,2 GB | Rápido p/ normalização de datas e matéria | Não é multimodal (usa texto do OCR) |
+- **Modelo:** `google/gemma-4-26b-a4b-it:free` — MoE 25.2B total / 3.8B ativos por token, Apache 2.0, multimodal (texto, imagem, vídeo curto), 256k–262k contexto, function calling + structured output.
+- **Endpoint:** `POST https://openrouter.ai/api/v1/chat/completions` (OpenAI-compatible). SDK: `openai` Python com `base_url` + `api_key=$OPENROUTER_API_KEY`.
+- **Por que ele:** custo zero (tier free), dispensa GPU/CPU pesada, aceita imagem em base64/data-URL direto (sem OCR separado), responde JSON estrito com `is_homework`, `subject`, `title`, `statement`, `due_at`, `estimated_minutes`, `priority`, `confidence`, `needs_review`.
+- **Limites do free:** rate limited (429 possível em pico) → fila com backoff exponencial + cache por `sha256` (nunca reprocessa mesma foto) + fallback para entrada manual se 3 retries falharem. Provedor pago `google/gemma-4-26b-a4b-it` (US$ 0.042/0.22 por 1M) é upgrade futuro sem trocar código (só troca `OPENROUTER_MODEL`).
+- **Modelos locais anteriores (SmolVLM2, Moondream2, Qwen2-VL-2B, Llama 3.2 1B) — REMOVIDOS do MVP.** Mantidos apenas como ideia de fallback offline pós-MVP, fora de escopo.
 
-**Recomendação de MVP (pipeline híbrido, mais robusto em CPU):**
-1. **Tesseract** faz o OCR do texto impresso/manuscrito simples.
-2. **Llama 3.2 1B (Q4)** (ou Qwen2.5-1.5B-Instruct) converte o texto + metadados em **JSON estruturado** (normalização de datas relativas, matéria, enunciado).
-3. **VLM pequeno (Moondream2 ou Qwen2-VL-2B-Q4)** é usado apenas quando o OCR falha/baixa confiança e há necessidade de leitura visual (ex.: layout complexo).
+### 6.4 Fallback e evolução (pós-MVP — RF-15 redefinido)
 
-Esse desenho reduz a carga multimodal (mais cara em CPU) e aproveita o LLM de texto, muito mais rápido.
-
-### 6.4 Fallback para API externa (opcional, pós-MVP — RF-15)
-
-- Acionado somente quando `confianca < limiar` **e** o responsável optou por "precisão máxima".
-- Provedores candidatos: APIs de visão com tier gratuito/baixo custo.
-- **Guardrails:** flag por conta (opt-in), limite mensal de chamadas, mascaramento de dados pessoais, registro de custo. Desligado por padrão.
+- RF-15 original (fallback para API externa quando confiança < limiar) **está incorporado**: OpenRouter já é o primário.
+- Evoluções futuras: (a) trocar `:free` pelo pago para SLA maior, (b) reintroduzir OCR local (Tesseract) como pré-enriquecimento do prompt, (c) multi-provider OpenRouter (`provider` routing/failover).
+- **Guardrails mantidos:** limite mensal de chamadas por conta, mascaramento/PII mínimo em logs, registro de custo/latência/confiança por extração. Flag `AI_ENABLED=true/false` para desligar IA e operar em modo manual.
 
 ---
 
@@ -429,14 +422,12 @@ flowchart TD
     A[Responsável envia foto] --> B{Tipo de entrada}
     B -->|Telegram| C[Bot recebe update]
     B -->|Web| D[Upload API]
-    C --> E[Deduplica por hash SHA-256]
+    C --> E[Deduplica por hash SHA-256 + anonimiza: resize 1600px, strip EXIF]
     D --> E
-    E -->|nova| F[Enfileira job de extração]
-    E -->|duplicada| Z[Responde: já registrada]
-    F --> G[Preprocessa imagem]
-    G --> H[OCR Tesseract pt-BR]
-    H --> I[LLM/VLM extrai JSON]
-    I --> J{Confiança >= 0.75?}
+    E -->|nova| F[Enfileira job OpenRouter]
+    E -->|duplicada| Z[Responde: já registrada, reaproveita extração]
+    F --> G[POST OpenRouter gemma-4-26b-a4b-it:free - imagem+prompt → JSON]
+    G --> J{Confiança >= 0.75?}
     J -->|Não| K[needs_review]
     J -->|Sim| L[agendada provisória]
     K --> M[Responsável revisa/corrige]
@@ -569,13 +560,13 @@ sequenceDiagram
 
 | Risco | Prob. | Impacto | Mitigação |
 |---|---|---|---|
-| OCR ruim em caligrafia de criança | Alta | Alto | Pipeline híbrido OCR→LLM; revisão humana obrigatória em baixa confiança; melhorar pré-processamento |
-| Estouro de RAM/CPU em 1 vCPU (swap/OOM) | Alta | Alto | Fila serializada, modelo carregado sob demanda, limites de memória por container, swap monitorado |
-| Extrapolação de tempo de extração | Média | Médio | Timeout 90s + fallback manual; modelo menor; cache de resultados por hash |
-| Escalada de custo com API externa | Média | Médio | Fallback opt-in, limites mensais e alerta de custo |
-| Dados sensíveis de menores (LGPD) | Média | Alto | Consentimento parental, criptografia, minimização, retenção limitada, direito de exclusão |
-| Dependência da API do Telegram | Baixa | Alto | Abstrair canal de notificação; notificação web/e-mail como redundância (pós-MVP) |
-| Extração "inventar" campos (alucinação) | Média | Alto | Schema estrito com `null` permitido; proibir inferência de datas não visíveis; revisão humana |
+| OCR/leitura ruim em caligrafia de criança | Alta | Alto | Prompt multimodal direto na imagem (Gemma 4) sem OCR intermediário; revisão humana obrigatória em baixa confiança; anonimização preserva legibilidade (JPEG q=82, 1600px) |
+| Rate limit 429 do tier free OpenRouter | Média | Médio | Fila com backoff 1/5/30 min (3 retries), cache por SHA-256 (nunca reprocessa), upgrade para modelo pago só trocando `OPENROUTER_MODEL` |
+| Timeout/latência da API externa | Média | Médio | Timeout 60s + retry 1×; modo manual sempre disponível; concorrência 3–5 sem OOM |
+| Escalada de custo se migrar para pago | Baixa | Médio | Modelo free como padrão; limites mensais por conta e alerta de custo; log de tokens por extração |
+| Dados sensíveis de menores (LGPD) | Média | Alto | Anonimização pré-envio (resize, strip EXIF, hash), HTTPS, sem PII em logs, retenção 90 dias, direito de exclusão |
+| Dependência da API do Telegram + OpenRouter | Baixa | Alto | Abstrair canal de notificação e `VisionProvider`; entrada manual nunca bloqueada; `AI_ENABLED=false` opera degradado |
+| Extração "inventar" campos (alucinação) | Média | Alto | Schema estrito com `null` permitido + `response_format=json_object` + `temperature=0.1`; proibir inferência de datas não visíveis; revisão humana |
 | Adoção baixa do formato foto | Média | Médio | Onboarding guiado; entrada manual sempre disponível |
 | Complexidade do motor de slots | Média | Médio | Começar com regras determinísticas simples; validar com dados reais antes de tunar pesos |
 
@@ -645,7 +636,8 @@ sequenceDiagram
 | Versão | Data | Autor | Alterações |
 |--------|------|-------|-----------|
 | 1.0 | 2026-09-22 | Subagente PRD | Versão inicial completa (MVP + pós-MVP, IA local, motor de slots, Telegram) |
+| 1.1 | 2026-09-22 | OpenCode | Migração IA local → OpenRouter `google/gemma-4-26b-a4b-it:free` (substituição total, anonimização pré-envio, sem Ollama/Tesseract no caminho crítico) |
 
 ---
 
-> **A [DEFINIR] no momento:** nome comercial definitivo, provedor de pagamento, política exata de retenção legal de imagens, pesos iniciais do motor de slots (tunar com dados reais), provedor de VLM de produção (benchmark SmolVLM2 vs Moondream2 vs Qwen2-VL-2B na VPS real).
+> **A [DEFINIR] no momento:** nome comercial definitivo, provedor de pagamento, política exata de retenção legal de imagens, pesos iniciais do motor de slots (tunar com dados reais), `OPENROUTER_API_KEY` de produção e limites de rate limit do tier free em pico (definir concorrência 3 vs 5 e alertas).

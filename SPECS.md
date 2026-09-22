@@ -1,8 +1,8 @@
 # SPECS — Hora da Tarefa (SDD)
 
 > Documento de Especificação Técnica (Spec-Driven Development).
-> Autor: subagente SPEC · Versão: 1.0 · Status: **Rascunho para revisão**
-> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose.
+> Autor: subagente SPEC + OpenCode · Versão: 1.1 (OpenRouter) · Status: **Rascunho para revisão**
+> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`google/gemma-4-26b-a4b-it:free`).
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
 
 ---
@@ -33,8 +33,8 @@
 
 | Princípio | Decisão |
 |---|---|
-| Baixo consumo | IA roda **local** na VPS; OCR leve + VLM quantizado. Sem dependência de API de LLM paga no MVP. |
-| Simplicidade operacional | Um único `docker-compose.yml`; sem Kubernetes; sem Redis cluster. |
+| Baixo consumo | IA 100% via API externa gratuita; zero inferência local. Sem dependência de GPU/VLM quantizado no MVP. |
+| Simplicidade operacional | Um único `docker-compose.yml`; sem Kubernetes; sem Redis cluster; sem Ollama/llama.cpp. |
 | Degradação graciosa | Se IA falhar/baixa confiança → tarefa vai para fila de **revisão humana** no app (nunca perde o upload). |
 | Offline-first do bot | Toda notificação é idempotente e persistida em `notification_log`; reenvio seguro. |
 | Testabilidade | Núcleo (agendamento, extração → JSON, status FSM) são funções puras testáveis sem VLM/rede. |
@@ -49,30 +49,30 @@
 | Fila/Jobs | **Celery + Redis (broker + result backend)** | BullMQ (se backend Node) · cron simples como fase 0 | Celery permite workers GPU/CPU dedicados, retries e prioridade; Redis 7 leve. |
 | Storage | **MinIO (S3-compatible) em volume Docker** | diretório em volume + abstração S3 | Mesma API S3 permite migrar para provedor externo sem trocar código. |
 | Bot Telegram | **aiogram 3 (Python)** | grammY/Telegraf (Node) | aiogram no mesmo runtime do backend; webhook + FSM + idempotência. |
-| OCR | **PaddleOCR (PP-OCRv4) CPU** | Tesseract 5 | Melhor acurácia em português manuscrito/impresso; Tesseract como fallback. |
-| VLM (extração) | **Moondream-2B (Q4) via Ollama ou llama.cpp** | Qwen2-VL-2B-Instruct-Q4_K_M · SmolVLM2-360M (ultra-leve) | 2B Q4 cabe em ~2–3 GB RAM; Moondream focado em imagem→texto descritivo. |
-| LLM fallback texto | **Llama-3.2-1B-Instruct-Q4** | Qwen2.5-1.5B-Instruct-Q4 | Quando OCR gera bom texto mas VLM indisponível, normaliza para JSON. |
-| Runtime IA | **Ollama** (serve) ou **llama.cpp server** | — | Ollama simplifica download/quantização; llama.cpp se quisermos controle de memória. |
+| OCR | **Nenhum no caminho crítico** (Gemma 4 lê imagem direto) | Tesseract 5 como enriquecimento futuro opcional | Removido para simplificar; reavaliar pós-MVP se manuscrito exigir |
+| VLM (extração) | **OpenRouter `google/gemma-4-26b-a4b-it:free` via `openai` SDK (`base_url=https://openrouter.ai/api/v1`)** | `google/gemma-4-26b-a4b-it` (pago) para SLA maior | MoE 25.2B/3.8B ativos, multimodal texto+imagem, 262k contexto, structured output, custo zero |
+| LLM fallback texto | **O mesmo Gemma 4 (só-texto, sem imagem)** | — | Sem Llama/Qwen local; retry usa o mesmo modelo com `temperature=0.1` |
+| Runtime IA | **HTTP client + Pillow (resize/strip EXIF)** | — | Sem Ollama/llama.cpp; worker leve |
 | Reverse proxy/TLS | **Caddy** (TLS automático) | Nginx + certbot | Menos config na VPS. |
 | Observabilidade | **structlog (JSON) + Prometheus/client + Grafana Cloud free (ou Loki)** | — | Logs estruturados + métricas de fila/IA/latência. |
 | CI/CD | GitHub Actions → build imagens → `docker compose pull && up -d` na VPS | — | Rolling restart simples. |
 
-### 0.3 Orçamento de recursos (1 vCPU / 4 GB / 50 GB)
+### 0.3 Orçamento de recursos (1 vCPU / 4 GB / 50 GB — sem IA local)
 
-> ⚠️ **Restrição dura:** não é possível manter VLM + OCR + Postgres + Redis + MinIO + backend todos residentes ao mesmo tempo com folga. Estratégia: **workers de IA sob demanda**, com limites de memória e fila serializada.
+> **Sem VLM/Ollama na VPS.** Worker de IA é só HTTP + Pillow. Gargalo passa a ser rate limit do tier free, não RAM.
 
 | Serviço | RAM alvo (limit) | CPU | Observação |
 |---|---|---|---|
 | caddy | 64 MB | 0.1 | proxy |
-| api (FastAPI) | 384 MB | 0.5 | |
+| api (FastAPI, inclui cliente OpenRouter) | 384 MB | 0.5 | |
 | worker-default (notificações, agendamento) | 256 MB | 0.3 | |
-| worker-ai (OCR+VLM) | 2.0 GB | 1.0 | **concurrency=1**, fila serial; sobe só sob demanda |
+| worker-ai (anonimiza + chama OpenRouter) | 256 MB | 0.3 | **concurrency=3–5**, jobs I/O-bound; sem modelo residente |
 | postgres | 512 MB | 0.3 | `shared_buffers=128MB` |
-| redis | 128 MB | 0.1 | `maxmemory 96mb`, `noeviction` |
+| redis | 128 MB | 0.1 | `maxmemory 96mb`, `noeviction` — fila IA + backoff + cache sha256 |
 | minio | 256 MB | 0.2 | |
-| **Total simultâneo (pico)** | **≈3.6 GB** | ~2.4 vCPU | excede 1 vCPU → IA é gargalo; aceitável (fila). |
+| **Total simultâneo (pico)** | **≈1.9 GB** | ~1.6 vCPU | folga confortável em 4 GB; sem swap/OOM de IA. |
 
-**Mitigações:** trocar MinIO por volume simples se RAM apertar; desligar VLM e usar só OCR+Llama-1B em horário de pico; agendar job pesado em lote noturno; swap 2 GB no host.
+**Mitigações de rate limit (tier free):** backoff exponencial 1/5/30 min (3 retries), cache/dedupe por `sha256` (nunca reprocessa mesma foto), `AI_WORKER_CONCURRENCY` configurável, upgrade para `google/gemma-4-26b-a4b-it` pago só trocando `OPENROUTER_MODEL`.
 
 ### 0.4 Estrutura de repositório sugerida
 
@@ -85,15 +85,15 @@ hora_da_tarefa/
 ├─ backend/
 │  ├─ app/
 │  │  ├─ api/           # routers FastAPI
-│  │  ├─ core/          # config, security, logging
+│  │  ├─ core/          # config, security, logging (inclui settings OpenRouter)
 │  │  ├─ models/        # SQLAlchemy
-│  │  ├─ schemas/       # Pydantic
-│  │  ├─ services/      # scheduling.py, extraction.py, notify.py
-│  │  ├─ tasks/         # celery tasks
+│  │  ├─ schemas/       # Pydantic (inclui ExtractionResult)
+│  │  ├─ services/      # scheduling.py, vision_openrouter.py, notify.py
+│  │  ├─ tasks/         # celery tasks (extract_homework via OpenRouter)
 │  │  └─ bot/           # aiogram handlers
 │  ├─ alembic/
-│  └─ tests/
-├─ ai/                  # Dockerfile OCR/VLM, prompts/
+│  └─ tests/            # test_vision_openrouter.py (mock + live opcional)
+├─ ai/                  # prompts/gemma_system.txt (sem Docker de VLM, sem .gguf)
 └─ specs/               # specs individuais
 ```
 
@@ -112,8 +112,8 @@ flowchart LR
   API --> S3[(MinIO/S3)]
   API --> Q[(Redis / Celery)]
   Q --> WA[worker-default: agenda + notifica]
-  Q --> WAI[worker-ai: OCR + VLM]
-  WAI --> OLL[Ollama / llama.cpp]
+  Q --> WAI[worker-ai leve: anonimiza + OpenRouter]
+  WAI --> OR[OpenRouter gemma-4-26b-a4b-it:free]
   WAI --> S3
   WAI --> PG
   WA --> BOT
@@ -124,18 +124,19 @@ flowchart LR
 
 | Componente | Responsabilidade | Não faz |
 |---|---|---|
-| `api` | Autenticação, CRUD, upload, upload→fila, expõe `/suggestions`, webhook Telegram | Não executa IA nem OCR inline |
-| `worker-ai` | Pré-processa imagem, OCR, chamada VLM, valida JSON, grava `homework` + `homework_image` | Não envia notificação |
+| `api` | Autenticação, CRUD, upload, upload→fila, expõe `/suggestions`, webhook Telegram | Não chama IA inline (só enfileira) |
+| `worker-ai` | Anonimiza imagem (resize/strip EXIF/hash), chama OpenRouter Gemma 4, valida JSON, grava `homework` + `homework_image` | Não roda modelo local; não envia notificação |
 | `worker-default` | Recalcula sugestões, dispara notificações 24h/2h, transições de status por tempo (atrasada) | Não processa imagem |
 | `scheduler` (beat) | Aciona periodicamente: varredura de prazos, recalcular agenda, retry de jobs | - |
 | `bot` (aiogram) | Recebe update do Telegram, valida usuário, chama API interna | Não acessa DB diretamente (usa API) |
 | `minio` | Guarda imagens originais e derivadas | - |
+| `openrouter` (externo) | Inferência multimodal imagem→JSON (`google/gemma-4-26b-a4b-it:free`) | Não guarda estado; rate limited no free |
 
 ### 1.3 Fluxo principal (happy path)
 
 1. Pai envia foto no Telegram → bot baixa arquivo e chama `POST /homeworks/upload` (multipart) com `child_id` opcional.
-2. API grava `homework` (status `pendente`), salva imagem em `homework_image`, publica job `extract_homework` na fila `ai`.
-3. `worker-ai` roda OCR+VLM → produz JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança) → publica `compute_suggestions`.
+2. API anonimiza (resize ≤1600px, strip EXIF, SHA-256), grava `homework` (status `pendente`), salva imagem em `homework_image`, publica job `extract_homework` na fila `ai` (dedupe por `sha256`: hash repetido reaproveita `extraction_json` sem chamar API).
+3. `worker-ai` chama OpenRouter `google/gemma-4-26b-a4b-it:free` (imagem base64 + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança) → publica `compute_suggestions`.
 4. `worker-default` roda motor de agendamento → grava `suggestion_slot` → publica `notify` (sugestão inicial).
 5. Bot envia mensagem com sugestão e botões (`Agendar` / `Outra` / `Não é tarefa`).
 6. Beat agenda lembretes 24h/2h em `notification_log` (status `scheduled`) e dispara quando vence.
@@ -284,8 +285,8 @@ CHECK (`end_time` > `start_time`). UNIQUE(child_id, weekday, start_time, subject
 | size_bytes | bigint | NOT NULL | |
 | width / height | int | NULL | |
 | sha256 | text | NOT NULL | dedupe |
-| ocr_text | text | NULL | texto OCR |
-| preprocessed_key | text | NULL | imagem tratada |
+| ocr_text | text | NULL | texto OCR — **não usado no MVP OpenRouter** (reservado p/ enriquecimento futuro) |
+| preprocessed_key | text | NULL | imagem anonimizada (1600px, sem EXIF, JPEG) |
 | created_at | timestamptz | NOT NULL | |
 | expires_at | timestamptz | NULL | retenção (§10) |
 
@@ -745,53 +746,54 @@ Ajuste por idade: `×1.3` se <9 anos, `×1.15` se 9–11, `×1.0` se 12+. Persis
 
 ---
 
-## 5. Pipeline de IA
+## 5. Pipeline de IA (OpenRouter — sem IA local)
 
 ### 5.1 Visão geral
 
 ```mermaid
 flowchart LR
-  A[Upload imagem] --> B[Pré-processamento]
-  B --> C[OCR PaddleOCR]
-  C --> D{VLM disponível?}
-  D -- sim --> E[VLM image->JSON]
-  D -- não --> F[LLM texto->JSON Llama-3.2-1B]
-  E --> G[Validação + normalização]
-  F --> G
+  A[Upload imagem] --> B[Anonimização local: resize 1600px + strip EXIF + SHA-256]
+  B --> C{Hash já processado?}
+  C -- sim --> K[Reaproveita extraction_json]
+  C -- não --> E[OpenRouter gemma-4-26b-a4b-it:free image->JSON]
+  E --> G[Validação Pydantic + normalização]
   G --> H{confiança >= threshold?}
   H -- sim --> I[homework extraido]
   H -- não --> J[revisao_humana / baixa_confianca]
-  I --> K[Motor de agendamento]
+  I --> K2[Motor de agendamento]
 ```
+
+> Substituição total: sem PaddleOCR/Tesseract, sem Ollama/llama.cpp, sem Moondream/Qwen/Llama local no caminho crítico.
 
 ### 5.2 Etapas
 
-**E1. Pré-processamento** (`worker-ai`)
-- Validação: mime na allowlist, decodifica, rejeita corrompido.
-- Auto-orientação EXIF, correção de rotação.
-- Redimensiona para máx. lado 1600px (economia CPU/RAM).
-- Grayscale + binarização adaptativa (Otsu) + deskew (Ângulo ±15°) para OCR.
-- Salva derivada em `homework_image.preprocessed_key`.
-- **Timeouts:** 20 s total nesta etapa.
+**E1. Anonimização local** (`worker-ai`, Pillow, sem IA)
+- Validação: mime na allowlist (`image/jpeg|png|webp`) por **magic bytes**, decodifica, rejeita corrompido.
+- Auto-orientação EXIF + **remoção total de EXIF** (privacidade LGPD).
+- Redimensiona para máx. lado **1600px** (economia de tokens/latência), converte para **JPEG q=82**, calcula **SHA-256** para dedupe/cache.
+- Salva original + derivada em `homework_image` (`storage_key`, `preprocessed_key`, `expires_at` 90 dias).
+- Hash repetido → reaproveita `extraction_json` anterior, **não chama API**.
+- **Timeout:** 10 s nesta etapa.
 
-**E2. OCR** — PaddleOCR `pt` + `en`; retorna texto + `ocr_confidence` por linha. Fallback Tesseract se Paddle indisponível.
+**E2. Chamada OpenRouter** — `google/gemma-4-26b-a4b-it:free`
+- `POST https://openrouter.ai/api/v1/chat/completions`, SDK `openai` Python com `base_url="https://openrouter.ai/api/v1"`, `api_key=$OPENROUTER_API_KEY`.
+- Payload: `model="google/gemma-4-26b-a4b-it:free"`, `messages=[{role:"user", content:[{type:"text", text:SYSTEM+hint},{type:"image_url", image_url:{url:"data:image/jpeg;base64,..."}}]}]`, `response_format={"type":"json_object"}`, `temperature=0.1`, `max_tokens=2048`.
+- Headers: `Authorization: Bearer …`, `HTTP-Referer: $OPENROUTER_SITE_URL`, `X-Title: $OPENROUTER_APP_NAME`.
+- Decodificação forçada de JSON (parse + retry único em modo só-texto com o mesmo modelo se 1ª resposta vier com markdown).
+- **Timeout:** 60 s + retry 1× imediato; 429/5xx → backoff Celery 1/5/30 min (máx. 3 tentativas).
 
-**E3. Extração estruturada**
-- Se VLM disponível: envia imagem (redimensionada) + prompt de sistema → JSON.
-- Fallback texto: envia `ocr_text` ao Llama-3.2-1B-Instruct.
-- Decodificação forçada de JSON (grammar/regex + retry único).
-
-**E4. Validação** (Pydantic)
+**E3. Validação** (Pydantic `ExtractionResult`)
 - `subject` deve estar em taxonomia conhecida; senão `"Outro"`.
 - `due_at`: parser de datas pt-BR ("sexta", "25/09", "amanhã"); se só dia → 23:59 local; se passado → próximo ciclo válido.
-- `statement` máx 4000 chars; trunca e marca.
-- `confidence` global = `min(ocr_conf, llm_conf)` com pesos 0.35/0.65.
+- `statement` máx 4000 chars; trunca e marca `needs_review=true`.
+- `confidence` vem do modelo (0–1); `needs_review` = `confidence<0.75` ou críticos nulos.
+- `is_homework=false` com conf ≥0.8 → descarta com aviso.
 
-**E5. Persistência e evento** — grava `homework.extraction_json`, `extraction_status`, publica `compute_suggestions`.
+**E4. Persistência e evento** — grava `homework.extraction_json` (+ `meta.engine="google/gemma-4-26b-a4b-it:free"`, `tokens`, `latency_ms`, `image_sha256`), `extraction_status`, publica `compute_suggestions`.
 
-**E6. Fallback humano** — se `confidence < 0.6` **ou** campos críticos (`subject`, `due_at`) ausentes → `extraction_status='baixa_confianca'` e `status='pendente'`; UI mostra "Revise os dados"; bot pergunta ao pai.
+**E5. Falha/rate limit** — se 3 retries falharem (429 persistente, timeout, OOM remoto) → `extraction_status='falhou'` + orienta entrada manual. `AI_ENABLED=false` desliga IA e opera só manual. Sem fallback local no MVP.
 
-### 5.3 System prompt (exemplo — extração visual)
+### 5.3 System prompt (Gemma 4 multimodal — imagem + texto)
 
 ```
 Você é um assistente que lê fotografias de tarefas escolares brasileiras
@@ -803,13 +805,14 @@ Regras:
   Ciências, Biologia, Física, Química, História, Geografia, Inglês, Espanhol,
   Artes, Educação Física, Ensino Religioso, Outro.
 - "due_at": data de entrega no formato YYYY-MM-DD. Se aparecer "sexta",
-  calcule a próxima sexta. Se não houver data clara, use null.
+  calcule a próxima sexta a partir da data de hoje (America/Sao_Paulo). Se não houver data clara, use null.
 - "title": resumo de até 8 palavras.
-- "statement": enunciado transcrito fielmente, sem inventar.
+- "statement": enunciado transcrito fielmente da imagem, sem inventar.
 - "estimated_minutes": inteiro; estime pela quantidade de exercícios.
 - "priority": 0=baixa, 1=normal, 2=alta (prova/trabalho = 2).
 - "confidence": 0.0 a 1.0, sua certeza geral.
-- Se a imagem não for uma tarefa escolar, retorne {"is_homework": false}.
+- "needs_review": true se qualquer campo crítico incerto.
+- Se a imagem não for uma tarefa escolar, retorne {"is_homework": false, "confidence": 0.9, "needs_review": true}.
 
 Esquema:
 {
@@ -823,6 +826,23 @@ Esquema:
   "confidence": number,
   "needs_review": boolean
 }
+```
+
+Exemplo de chamada (OpenAI SDK):
+```python
+from openai import OpenAI
+client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=os.environ["OPENROUTER_API_KEY"])
+resp = client.chat.completions.create(
+  model="google/gemma-4-26b-a4b-it:free",
+  messages=[{"role": "user", "content": [
+    {"type": "text", "text": SYSTEM_PROMPT + f"\nDica do responsável: {hint_text}"},
+    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+  ]}],
+  response_format={"type": "json_object"},
+  temperature=0.1,
+  max_tokens=2048,
+  extra_headers={"HTTP-Referer": SITE_URL, "X-Title": APP_NAME},
+)
 ```
 
 ### 5.4 Formato JSON de saída (contrato interno)
@@ -839,16 +859,17 @@ Esquema:
   "confidence": 0.91,
   "needs_review": false,
   "meta": {
-    "engine": "moondream-2b-q4",
-    "ocr_confidence": 0.88,
-    "llm_confidence": 0.93,
-    "processing_ms": 8420,
+    "engine": "google/gemma-4-26b-a4b-it:free",
+    "provider": "openrouter",
+    "prompt_tokens": 1240,
+    "completion_tokens": 180,
+    "latency_ms": 3200,
     "image_sha256": "..."
   }
 }
 ```
 
-### 5.5 Thresholds e fallback
+### 5.5 Thresholds, rate limit e fallback
 
 | Condição | Ação |
 |---|---|
@@ -856,20 +877,29 @@ Esquema:
 | `0.6 ≤ confidence < 0.75` | `extraction_status='baixa_confianca'`; notifica pedindo confirmação |
 | `confidence < 0.6` ou campos críticos nulos | `revisao_humana`; bot envia formulário rápido / UI destaca |
 | `is_homework=false` e conf ≥0.8 | descarta com aviso "Não identifiquei uma tarefa" |
-| VLM timeout (>90 s) ou OOM | reenfileira 1×; se falhar → OCR + Llama-1B; se falhar → `falhou` |
-| Tarefa repetida (sha256 igual) | reaproveita extração anterior, não reprocessa |
+| 429 rate limit (tier free) ou 5xx/timeout 60s | backoff Celery 1/5/30 min, máx. 3 retries; depois → `falhou` + entrada manual |
+| Tarefa repetida (sha256 igual) | reaproveita extração anterior, **não chama API** |
+| `AI_ENABLED=false` | pula IA, cria tarefa para preenchimento manual |
 
-### 5.6 Config IA (`.env`)
+### 5.6 Config IA (`.env` — ver `.env.example`)
 
 ```
-AI_VLM_MODEL=moondream:2b-q4
-AI_VLM_FALLBACK_MODEL=qwen2-vl:2b-q4
-AI_TEXT_FALLBACK_MODEL=llama3.2:1b-instruct-q4
-AI_OCR_ENGINE=paddle
+# OpenRouter (primário, substitui VLM local)
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+OPENROUTER_SITE_URL=https://horadatarefa.app
+OPENROUTER_APP_NAME=Hora da Tarefa
+OPENROUTER_TIMEOUT_SECONDS=60
+OPENROUTER_MAX_TOKENS=2048
+OPENROUTER_TEMPERATURE=0.1
+# Pipeline
+AI_ENABLED=true
 AI_CONFIDENCE_OK=0.75
 AI_CONFIDENCE_REVIEW=0.60
-AI_TIMEOUT_SECONDS=90
-AI_WORKER_CONCURRENCY=1
+AI_WORKER_CONCURRENCY=3
+AI_MAX_IMAGE_SIDE=1600
+AI_JPEG_QUALITY=82
 ```
 
 ---
@@ -1103,19 +1133,24 @@ Tela de Onboarding, português, tema claro, azul-profundo e verde, cantos arredo
 
 ### 9.1 Critérios de aceitação (Gherkin)
 
-**CA-01 — Upload e extração**
+**CA-01 — Upload e extração (OpenRouter)**
 ```gherkin
 Funcionalidade: Upload de foto da tarefa
   Cenário: Extração bem-sucedida
     Dado que sou um responsável autenticado com a criança "Ana"
     Quando envio uma foto nítida de uma tarefa de Matemática com entrega 25/09
     Então recebo 202 com homework_id e extraction_status "processando"
-    E em até 90s a tarefa fica com subject "Matemática", due_at 25/09 e extraction_status "ok"
+    E em até 60s a tarefa fica com subject "Matemática", due_at 25/09 e extraction_status "ok"
+    E `extraction_json.meta.engine` é "google/gemma-4-26b-a4b-it:free"
 
   Cenário: Imagem ilegível
     Quando envio uma foto desfocada
     Então a tarefa fica com extraction_status "baixa_confianca"
     E recebo orientação para revisar os dados
+
+  Cenário: Foto duplicada não reprocessa
+    Quando envio a mesma foto (mesmo sha256) duas vezes
+    Então a segunda resposta reaproveita a extração sem nova chamada OpenRouter
 ```
 
 **CA-02 — Sugestão de horário**
@@ -1163,21 +1198,21 @@ Funcionalidade: Upload de foto da tarefa
 
 | Camada | Ferramenta | Escopo | Custo |
 |---|---|---|---|
-| Unitário | pytest | `scheduling.score`, `suggest_slots`, FSM, parser de datas, validação Pydantic | sem IA, rápido |
-| Contrato | pytest + httpx | endpoints, códigos de erro, schemas | mocks de IA |
-| Integração IA | pytest `-m ai` | OCR+VLM com 5–10 imagens fixture | **rodar em CI noturno**, não a cada push |
-| E2E | Playwright (headless) | upload→sugestão→aceitar→notificação (Telegram mock) | agendado |
+| Unitário | pytest | `scheduling.score`, `suggest_slots`, FSM, parser de datas, validação Pydantic, anonimização (resize/strip EXIF/hash) | sem IA, rápido |
+| Contrato | pytest + httpx | endpoints, códigos de erro, schemas | mock OpenRouter (`respx`/`responses`) |
+| Integração IA | pytest `-m ai` | OpenRouter Gemma 4 com 5–10 imagens fixture (requer `OPENROUTER_API_KEY`) | **rodar manual/noturno**, respeitar rate limit free; medir precision/recall de matéria e data |
+| E2E | Playwright (headless) | upload→sugestão→aceitar→notificação (Telegram mock + OpenRouter mock) | agendado |
 | Carga | Locust/K6 | 50 usuários, p95 < 800ms em `/homeworks` | janela de manutenção |
 
-**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data.
+**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data. Teste live usa `OPENROUTER_MODEL=google/gemma-4-26b-a4b-it:free` com `VCR`/cache para não estourar rate limit.
 
-**Regras de CI:** unit+contrato em todo PR; integração IA noturna; E2E diário. Imagens `worker-ai` **não** são construídas em PR.
+**Regras de CI:** unit+contrato em todo PR (com mock); integração IA live manual/noturna. Sem build de imagem `worker-ai` pesada (worker é leve, sem modelo).
 
 ### 9.3 Observabilidade e logs
 
-- **Logs:** `structlog` JSON com `request_id`, `user_id`, `homework_id`, `job_id`, `duration_ms`.
-- **Métricas Prometheus:** `http_request_duration_seconds`, `celery_queue_depth{queue}`, `ai_extraction_confidence` (histograma), `ai_failures_total{stage}`, `notifications_sent_total{kind}`, `db_pool_usage`.
-- **Alertas:** fila `ai` > 20 por 10 min; taxa de `revisao_humana` > 40%; erro 5xx > 2%; RAM do worker-ai > 90% por 5 min.
+- **Logs:** `structlog` JSON com `request_id`, `user_id`, `homework_id`, `job_id`, `duration_ms`, `openrouter_latency_ms`, `prompt_tokens`, `completion_tokens`. Nunca logar imagem base64, `statement`/OCR completos ou `OPENROUTER_API_KEY`; usar hash/ID.
+- **Métricas Prometheus:** `http_request_duration_seconds`, `celery_queue_depth{queue}`, `openrouter_requests_total{status}`, `openrouter_rate_limited_total`, `ai_extraction_confidence` (histograma), `ai_failures_total{stage}`, `notifications_sent_total{kind}`, `db_pool_usage`.
+- **Alertas:** fila `ai` > 50 por 10 min; `openrouter_rate_limited_total` > 10/h; taxa de `revisao_humana` > 40%; erro 5xx > 2%; latência OpenRouter p95 > 45s.
 - **Healthchecks:** `/healthz` (liveness), `/readyz` (checa PG+Redis+S3).
 - **Retenção de logs:** 30 dias.
 
@@ -1185,10 +1220,11 @@ Funcionalidade: Upload de foto da tarefa
 
 ## 10. Segurança e LGPD
 
-### 10.1 Dados de menor
+### 10.1 Dados de menor (OpenRouter)
 
 - Coletar o **mínimo**: nome/apelido, data de nascimento opcional, série. Sem CPF, endereço, foto do menor.
-- Imagens de tarefas podem conter nome/dados do menor → tratar como **dado pessoal de criança** (art. 14 LGPD) e executar sob **melhor interesse** e consentimento do responsável.
+- Imagens de tarefas podem conter nome/dados do menor → **anonimização obrigatória pré-envio**: resize ≤1600px, **strip total de EXIF**, conversão JPEG, envio só da derivada via HTTPS para `https://openrouter.ai/api/v1`. Nunca enviar original com EXIF/GPS.
+- Tratar como **dado pessoal de criança** (art. 14 LGPD) sob consentimento do responsável; informar em termo que a extração usa API externa (OpenRouter + Google Gemma) com trânsito internacional.
 - `child` nunca tem credencial/login próprio.
 
 ### 10.2 Consentimento
@@ -1204,9 +1240,11 @@ Funcionalidade: Upload de foto da tarefa
 
 ### 10.4 Anonimização
 
-- Logs nunca gravam `statement`/OCR completos; usam hash/ID.
+- Anonimização **antes** de qualquer chamada externa: resize, strip EXIF, hash SHA-256, JPEG q=82.
+- Logs nunca gravam imagem base64, `statement`/OCR completos ou `OPENROUTER_API_KEY`; usam hash/ID + contadores de tokens.
+- `OPENROUTER_API_KEY` só via env/Docker secrets, nunca em git, frontend ou logs. Rotação manual via dashboard OpenRouter.
 - Exportações para métricas agregadas não contêm nome.
-- Ambiente de teste usa dados sintéticos.
+- Ambiente de teste usa dados sintéticos + mocks; teste live só com fixtures sem PII real.
 
 ### 10.5 AuthN/AuthZ
 
@@ -1248,13 +1286,13 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 | ID | Requisito | Alvo verificável |
 |---|---|---|
 | RNF-01 | Latência de listagem | p95 < 800 ms para 50 tarefas |
-| RNF-02 | Latência de extração IA | p50 < 30 s, p95 < 90 s por imagem |
-| RNF-03 | Upload | aceita ≤ 10 MB; valida em < 2 s |
-| RNF-04 | Disponibilidade | 99% mensal (MVP) |
-| RNF-05 | Concorrência IA | `worker-ai` = 1 job simultâneo (proteção RAM) |
-| RNF-06 | Fila | profundidade estável; alerta > 20 |
+| RNF-02 | Latência de extração IA (OpenRouter) | p50 < 15 s, p95 < 45 s por imagem; timeout 60s + 1 retry |
+| RNF-03 | Upload + anonimização | aceita ≤ 10 MB; valida + anonimiza em < 2 s |
+| RNF-04 | Disponibilidade | 99% mensal (MVP); degradado manual se OpenRouter fora |
+| RNF-05 | Concorrência IA | `worker-ai` = 3–5 jobs simultâneos (I/O-bound); backoff em 429 |
+| RNF-06 | Fila | profundidade estável; alerta > 50 (rate limit) |
 | RNF-07 | Idempotência de notificação | zero duplicatas em retries |
-| RNF-08 | Recuperação | job de IA falho reenfileira 1× automaticamente |
+| RNF-08 | Recuperação | job de IA falho reenfileira até 3× com backoff 1/5/30 min; dedupe por sha256 |
 | RNF-09 | Portabilidade | tudo em Docker Compose; config via env |
 | RNF-10 | Acessibilidade web | WCAG 2.1 AA nas telas principais |
 | RNF-11 | Retenção de imagem | padrão 90 dias, purge automático |
@@ -1266,7 +1304,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 
 | Requisito | Seções |
 |---|---|
-| RF Upload/OCR/LLM | §0, §3.2, §5 |
+| RF Upload/OCR/LLM → Upload/OpenRouter | §0, §3.2, §5 (OpenRouter Gemma 4, sem OCR/VLM local) |
 | RF Agendamento | §4 |
 | RF Notificação Telegram | §3.10, §6 |
 | RF Multi-criança | §2.4, §2.5, §3.6, §3.11 |
@@ -1281,8 +1319,8 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 ## 13. Requisitos Funcionais (índice)
 
 - **RF-01** Cadastrar/editar criança (multi-criança) e alternar contexto ativo.
-- **RF-02** Enviar foto de tarefa via web ou Telegram; criar `homework` + `homework_image`.
-- **RF-03** Processar imagem com OCR + LLM e extrair matéria, enunciado, entrega, duração, prioridade.
+- **RF-02** Enviar foto de tarefa via web ou Telegram; anonimizar (resize/strip EXIF/hash) e criar `homework` + `homework_image`.
+- **RF-03** Processar imagem via OpenRouter `google/gemma-4-26b-a4b-it:free` e extrair matéria, enunciado, entrega, duração, prioridade (sem OCR/VLM local).
 - **RF-04** Sinalizar baixa confiança e permitir revisão humana.
 - **RF-05** Sugerir até 5 melhores slots livres respeitando grade, atividades, deslocamento e quiet hours.
 - **RF-06** Aceitar/rejeitar sugestão e agendar tarefa.
@@ -1302,16 +1340,17 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 
 > ⚠️ **ABERTO:** itens a decidir com o responsável antes da implementação.
 
-1. **Idioma do OCR/manuscrito:** PaddleOCR lida bem com manuscrito infantil? Se não, aceitar apenas impresso no MVP?
-2. **Precisão mínima aceitável** de matéria/data nas fixtures (ex.: ≥85% matéria, ≥75% data)?
-3. **VLM escolhido:** Moondream-2B vs Qwen2-VL-2B na VPS real — benchmark de RAM/tempo pendente.
-4. **MinIO vs volume simples:** decidir após medir RAM total.
+1. **Manuscrito infantil:** Gemma 4 lê bem manuscrito em foto 1600px JPEG? Validar com 10 fixtures; se não, aceitar só impresso no MVP ou subir para modelo pago?
+2. **Precisão mínima aceitável** de matéria/data nas fixtures (ex.: ≥85% matéria, ≥75% data) com o tier free?
+3. **~~VLM escolhido~~ RESOLVIDO (v1.1):** OpenRouter `google/gemma-4-26b-a4b-it:free` como primário, substituição total do VLM local. Pendente só validar rate limit real e definir `AI_WORKER_CONCURRENCY` (3 vs 5).
+4. **MinIO vs volume simples:** decidir após medir RAM total (agora com folga, MinIO mantido por padrão).
 5. **Autenticação inicial:** só Telegram no MVP ou e-mail/senha desde o início?
 6. **Resumo diário** entra no MVP? (marcado opcional)
 7. **Fuso/múltiplos fusos** por criança: necessário?
-8. **Política exata de retenção** (90 dias é chute) — validar com responsável jurídico.
+8. **Política exata de retenção** (90 dias é chute) + termo LGPD informando uso de API externa (OpenRouter/EUA) — validar com responsável jurídico.
 9. **Stitch:** confirmar `customColor`/variante após primeira geração; avaliar trocar `colorVariant` para `FIDELITY`.
-10. **Provedor de hospedagem da VPS** e domínio para o webhook.
+10. **Provedor de hospedagem da VPS**, domínio para o webhook e onde guardar `OPENROUTER_API_KEY` (Docker secrets) + rotação.
+11. **Limites OpenRouter free:** teto mensal por conta, alerta de 429, quando migrar para `google/gemma-4-26b-a4b-it` pago?
 
 ---
 
@@ -1319,11 +1358,11 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 
 | Dimensão | Peso | Nota | Comentário |
 |---|---|---|---|
-| Completude | 30% | 27/30 | Todas as seções; Open Questions restantes de IA/VLM. |
-| Testabilidade | 25% | 23/25 | AC em Gherkin + RNF mensuráveis; falta definir fixtures exatas. |
-| Clareza | 20% | 18/20 | Contratos e algoritmos explícitos; taxonomia de matérias pode expandir. |
-| Escopo | 15% | 13/15 | Non-goals implícitos (sem app nativo, sem API LLM paga); explicitar. |
-| Edge Cases | 10% | 9/10 | Fallbacks IA, FSM, idempotência, retenção cobertos. |
-| **Total** | 100% | **90/100** | **Pronta para implementação** (resolver Open Questions 1–4). |
+| Completude | 30% | 28/30 | Pipeline OpenRouter end-to-end + env + LGPD anonimização; falta só validar fixtures. |
+| Testabilidade | 25% | 24/25 | AC em Gherkin + RNF mensuráveis (latência 60s, dedupe hash, 429/backoff); mocks definidos. |
+| Clareza | 20% | 19/20 | Endpoint, SDK, payload e thresholds explícitos; taxonomia de matérias pode expandir. |
+| Escopo | 15% | 14/15 | Non-goals claros (sem VLM local, sem OCR crítico); upgrade pago fora do MVP. |
+| Edge Cases | 10% | 9/10 | 429, timeout, duplicada, `AI_ENABLED=false`, `is_homework=false` cobertos. |
+| **Total** | 100% | **94/100** | **Pronta para implementação** (validar fixtures + rate limit real). |
 
-> Gaps bloqueadores antes do código: benchmark VLM (OQ-3) e decisão MinIO vs volume (OQ-4).
+> v1.1 (2026-09-22): migração IA local → OpenRouter Gemma 4 free. Gaps v1.0 (benchmark VLM OQ-3, RAM OQ-4) resolvidos por eliminação da inferência local.

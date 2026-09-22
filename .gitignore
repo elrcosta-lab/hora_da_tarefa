@@ -1,16 +1,22 @@
-# === Hora da Tarefa - .gitignore ===
-# Stack: Next.js + FastAPI + Postgres + Redis + MinIO + Ollama/llama.cpp + Caddy + Telegram bot
+# === Hora da Tarefa - .gitignore (v1.1 OpenRouter) ===
+# Stack: Next.js + FastAPI + Postgres + Redis + MinIO + OpenRouter (Gemma 4) + Caddy + Telegram bot
 
-# --- Segredos / env ---
+# --- Segredos / env (OPENROUTER_API_KEY nunca commita) ---
 .env
 .env.*
 !.env.example
+.env.local
+.env.production
 *.pem
 *.key
+openrouter*.json
+openrouter*.key
+.openrouter*
 secrets/
 secrets.json
+secrets/openrouter*
 
-# --- Python (FastAPI, aiogram, Celery, PaddleOCR) ---
+# --- Python (FastAPI, aiogram, Celery, Pillow + openai SDK OpenRouter) ---
 __pycache__/
 *.py[cod]
 *$py.class
@@ -55,13 +61,26 @@ caddy-config/
 *.db
 
 # --- Uploads e imagens de tarefas (LGPD: nunca commitar) ---
+# Vale p/ originais e derivadas anonimized (1600px, sem EXIF) + fixtures live com PII real
 /data/images/
 uploads/
 *.jpg.original
+*.anon.jpg
 backend/uploads/
 frontend/public/uploads/
+backend/tests/fixtures/live/
+backend/tests/fixtures/*real*
+tests/fixtures/live/
 
-# --- Modelos IA locais (pesados - baixar via script, não commitar) ---
+# --- OpenRouter cache / VCR (podem conter key, base64 ou PII) ---
+.vcr/
+**/cassettes/
+*.cassette.yaml
+*.cassette.yml
+.openrouter_cache/
+openrouter_cache/
+
+# --- Modelos IA locais (LEGADO v1.0 - removidos no MVP OpenRouter, mantidos p/ fallback offline futuro) ---
 *.gguf
 *.ggml
 *.bin
@@ -73,9 +92,10 @@ ai/models/
 ollama/
 !ai/models/.gitkeep
 
-# --- Logs / temporários ---
+# --- Logs / temporários (nunca logar base64, statement ou OPENROUTER_API_KEY) ---
 logs/
 *.log
+openrouter*.log
 tmp/
 temp/
 .cache/
