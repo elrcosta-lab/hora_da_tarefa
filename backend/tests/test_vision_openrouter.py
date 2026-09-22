@@ -125,6 +125,15 @@ def test_non_homework_returns_is_homework_false():
     assert result.extraction_status == "descartada"
 
 
+def test_decompression_bomb_fails_gracefully(monkeypatch):
+    import PIL.Image
+    from app.services.vision_openrouter import ExtractionFailed, extract_homework
+
+    monkeypatch.setattr(PIL.Image, "MAX_IMAGE_PIXELS", 100)
+    with pytest.raises(ExtractionFailed, match="INVALID_IMAGE"):
+        extract_homework(_make_test_image(800, 600), client=MagicMock())
+
+
 def test_rate_limit_raises_retryable():
     from app.services.vision_openrouter import extract_homework, OpenRouterRateLimited
 

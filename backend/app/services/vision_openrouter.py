@@ -9,10 +9,14 @@ import io
 import json
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageFile
 
 from app.core.config import Settings, get_settings
 from app.schemas.extraction import SUBJECTS, ExtractionResult
+
+# A1: teto de pixels contra decompression bomb (foto real de tarefa << 25MP)
+Image.MAX_IMAGE_PIXELS = 25_000_000
+ImageFile.LOAD_TRUNCATED_IMAGES = False
 
 
 class OpenRouterRateLimited(Exception):
@@ -80,9 +84,13 @@ def extract_homework(
     if not settings.AI_ENABLED:
         raise ExtractionFailed("AI_DISABLED")
 
-    anonymized, sha = anonymize_image(
-        image_bytes, max_side=settings.AI_MAX_IMAGE_SIDE, quality=settings.AI_JPEG_QUALITY
-    )
+    try:
+        anonymized, sha = anonymize_image(
+            image_bytes, max_side=settings.AI_MAX_IMAGE_SIDE, quality=settings.AI_JPEG_QUALITY
+        )
+    except Exception as exc:
+        # inclui DecompressionBombError: falha graciosa, nunca derruba o worker
+        raise ExtractionFailed(f"INVALID_IMAGE: {type(exc).__name__}") from exc
     b64 = base64.b64encode(anonymized).decode("ascii")
     system = system_prompt or _load_system_prompt()
     if hint_text:
