@@ -109,6 +109,21 @@ def test_today_aggregates_due_overdue_scheduled():
     assert isinstance(body["scheduled_today"], list)
 
 
+def test_export_respects_max_rows():
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.tasks.extract import export_csv
+
+    c = TestClient(app)
+    h, uid = make_auth(c)
+    cid = c.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    _upload(c, h, cid, seed=41)
+    _upload(c, h, cid, seed=42)
+    text = export_csv(uid, child_id=cid, max_rows=1)
+    assert len([ln for ln in text.strip().splitlines() if ln]) == 2  # header + 1
+
+
 def test_export_csv_utf8_with_filters():
     from app.main import app
 

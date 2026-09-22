@@ -34,7 +34,10 @@ async def telegram_webhook(
     x_telegram_bot_api_secret_token: str | None = Header(default=None, alias="X-Telegram-Bot-Api-Secret-Token"),
 ):
     settings = get_settings()
-    if x_telegram_bot_api_secret_token != settings.TELEGRAM_WEBHOOK_SECRET:
+    import hmac as _hmac
+
+    if not _hmac.compare_digest(x_telegram_bot_api_secret_token or "",
+                                settings.TELEGRAM_WEBHOOK_SECRET or ""):
         return JSONResponse(
             status_code=401,
             content={"error": {"code": "UNAUTHORIZED", "message": "Assinatura inválida.", "details": {}}},

@@ -6,5 +6,9 @@
 }
 
 :80 {
+	# A8: teto de corpo (uploads vão por multipart de 10MB já validado na API)
+	request_body {
+		max_size 11MB
+	}
 	reverse_proxy api:8000
 }

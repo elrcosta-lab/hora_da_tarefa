@@ -163,14 +163,14 @@ def today_overview(owner_user_id: str, child_id: str | None = None, date: str | 
 
 def export_csv(owner_user_id: str, child_id: str | None = None, status=None, subject: str | None = None,
                due_before: str | None = None, due_after: str | None = None,
-               q: str | None = None, sort: str = "created_at") -> str:
+               q: str | None = None, sort: str = "created_at", max_rows: int = 5000) -> str:
     """CSV UTF-8 (RF-12) com os mesmos filtros da listagem. Chamador adiciona BOM p/ Excel."""
     import csv as _csv
     import io as _io
 
     items = list_homeworks(child_id=child_id, owner_user_id=owner_user_id, status=status,
                            subject=subject, due_before=due_before, due_after=due_after,
-                           q=q, sort=sort)
+                           q=q, sort=sort)[:max_rows]
     buf = _io.StringIO()
     w = _csv.writer(buf)
     w.writerow(["id", "child_id", "subject", "title", "due_at", "status",
