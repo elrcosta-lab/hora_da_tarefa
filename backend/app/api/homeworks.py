@@ -178,6 +178,16 @@ def get_homework_image_view(homework_id: str, owner: str = Depends(get_current_u
     return Response(content=data, media_type=mime)
 
 
+@router.post("/{homework_id}/reprocess", status_code=202)
+def reprocess_homework_view(homework_id: str, background: BackgroundTasks,
+                            owner: str = Depends(get_current_user_id)):
+    denied = _owned_or_error(homework_id, owner)
+    if denied is not None:
+        return denied
+    background.add_task(run_extraction, homework_id)
+    return {"homework_id": homework_id, "extraction_status": "processando"}
+
+
 @router.get("/{homework_id}", status_code=200)
 def get_homework_view(homework_id: str, owner: str = Depends(get_current_user_id)):
     denied = _owned_or_error(homework_id, owner)

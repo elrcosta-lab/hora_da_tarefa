@@ -278,10 +278,42 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
     return rec
 
 
+def _to_utc_naive(dt):
+    """Compara instantes sem depender do fuso devolvido pelo driver (sqlite=naive, pg=aware)."""
+    if dt is None:
+        return None
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
+
+
+def retry_stale_extractions(now: datetime | None = None, older_than_minutes: int = 5) -> int:
+    """Beat: reexecuta extrações travadas em processando/falhou além da janela. Nunca derruba o tick."""
+    from datetime import timedelta as _td
+
+    now_utc = _to_utc_naive(now or datetime.now(timezone.utc))
+    cutoff = now_utc - _td(minutes=older_than_minutes)
+    retried = 0
+    with session_scope() as s:
+        rows = s.query(Homework).filter(
+            Homework.extraction_status.in_(["processando", "falhou"])).all()
+        stale_ids = []
+        for hw in rows:
+            created = _to_utc_naive(hw.created_at)
+            if created is not None and created <= cutoff:
+                stale_ids.append(hw.id)
+    for hid in stale_ids:
+        try:
+            run_extraction(hid)
+            retried += 1
+        except Exception:
+            continue
+    return retried
+
+
 def clear_store() -> None:
     """Apenas testes."""
     from app.core.storage import get_storage as _get_storage
-
     with session_scope() as s:
         imgs = s.query(HomeworkImage).all()
         keys = [i.storage_key for i in imgs]

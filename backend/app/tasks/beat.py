@@ -20,15 +20,17 @@ def send_telegram(chat_id: int, text: str) -> int | None:
 
 
 def run_beat_tick(now: datetime | None = None, sender=None) -> dict:
-    """Executa um ciclo: atrasos + envios. Retorna {"overdue": [...], "sent": n, "errors": n}."""
+    """Executa um ciclo: atrasos + envios + retry de extrações travadas."""
     from app.tasks import notify as _N
-    from app.tasks.extract import mark_overdue
+    from app.tasks.extract import mark_overdue, retry_stale_extractions
 
     now = now or datetime.now(TZ)
     overdue = mark_overdue(now.isoformat())
     stats: dict = {}
     _N.dispatch_due(now, sender=sender, stats=stats)
-    return {"overdue": overdue, "sent": stats.get("sent", 0), "errors": stats.get("errors", 0)}
+    retried = retry_stale_extractions(now, older_than_minutes=5)
+    return {"overdue": overdue, "sent": stats.get("sent", 0),
+            "errors": stats.get("errors", 0), "retried": retried}
 
 
 def start_scheduler() -> object:
