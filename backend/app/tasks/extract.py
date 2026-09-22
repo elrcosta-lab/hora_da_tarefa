@@ -5,6 +5,7 @@ Backoff 1/5/30 min e concorrência 3–5 serão configurados no Celery (fase inf
 """
 import hashlib
 import uuid
+from datetime import datetime, timezone
 
 # store MVP: chave "{child_id}:{sha256}" → homework_id ; homework_id → registro
 _UPLOADS: dict[str, str] = {}
@@ -118,3 +119,67 @@ def clear_store() -> None:
     _UPLOADS.clear()
     _HOMEWORKS.clear()
     _IMAGES.clear()
+
+
+# --- FSM de status (SPECS §4.6 v1.1, PRD RF-09) ---
+TRANSITIONS: dict[str, list[str]] = {
+    "pendente": ["agendada", "em_andamento", "cancelada", "atrasada"],
+    "agendada": ["em_andamento", "cancelada", "atrasada"],
+    "em_andamento": ["concluida", "nao_realizada"],
+    "atrasada": ["concluida", "nao_realizada", "cancelada"],
+    "concluida": ["arquivada"],
+    "nao_realizada": ["arquivada"],
+    "cancelada": ["arquivada"],
+    "arquivada": [],
+}
+
+TERMINAL = {"concluida", "nao_realizada", "cancelada", "arquivada"}
+
+
+class StatusConflict(Exception):
+    def __init__(self, current: str, attempted: str):
+        self.current = current
+        self.attempted = attempted
+        self.allowed = TRANSITIONS.get(current, [])
+        super().__init__(f"{current} -> {attempted} inválido")
+
+
+def transition_homework(homework_id: str, new_status: str) -> dict:
+    """Transição validada pela FSM. Levanta StatusConflict fora da matriz, KeyError se inexistente."""
+    rec = _HOMEWORKS.get(homework_id)
+    if rec is None:
+        raise KeyError(homework_id)
+    current = rec.get("status", "pendente")
+    if new_status == current:
+        return rec
+    allowed = TRANSITIONS.get(current, [])
+    if new_status not in allowed:
+        raise StatusConflict(current, new_status)
+    rec["status"] = new_status
+    rec["updated_at"] = datetime.now(timezone.utc).isoformat()
+    rec.setdefault("events", []).append({"from": current, "to": new_status, "at": rec["updated_at"]})
+    return rec
+
+
+def mark_overdue(now: str | None = None) -> list[str]:
+    """Beat: pendente|agendada com due_at passado → atrasada. Nunca toca finalizadas."""
+    from datetime import datetime as _dt
+
+    marked: list[str] = []
+    for hid, rec in _HOMEWORKS.items():
+        if rec.get("status") not in ("pendente", "agendada"):
+            continue
+        due = rec.get("due_at")
+        if not due:
+            continue
+        try:
+            # due_at YYYY-MM-DD ou ISO; compara por prefixo de data
+            due_day = str(due)[:10]
+            today = (now or _dt.now().astimezone().isoformat())[:10]
+            if due_day < today:
+                rec["status"] = "atrasada"
+                rec["updated_at"] = _dt.now(timezone.utc).isoformat()
+                marked.append(hid)
+        except Exception:
+            continue
+    return marked

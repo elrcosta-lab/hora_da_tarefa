@@ -1,8 +1,17 @@
-"""Router de upload + consulta (SPECS §3.2 §3.3 §3.4 v1.1)."""
+"""Router de upload + consulta + status (SPECS §3.2 §3.3 §3.4 §3.5 §4.6 v1.1)."""
 from fastapi import APIRouter, BackgroundTasks, File, Form, UploadFile
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
-from app.tasks.extract import detect_mime, get_homework, get_or_create_homework, list_homeworks, run_extraction
+from app.tasks.extract import (
+    StatusConflict,
+    detect_mime,
+    get_homework,
+    get_or_create_homework,
+    list_homeworks,
+    run_extraction,
+    transition_homework,
+)
 
 router = APIRouter(prefix="/v1/homeworks", tags=["homeworks"])
 
@@ -10,8 +19,15 @@ MAX_BYTES = 10 * 1024 * 1024
 ALLOWED = {"image/jpeg", "image/png", "image/webp"}
 
 
-def _error(code: str, message: str, http: int) -> JSONResponse:
-    return JSONResponse(status_code=http, content={"error": {"code": code, "message": message, "details": {}}})
+def _error(code: str, message: str, http: int, details: dict | None = None) -> JSONResponse:
+    return JSONResponse(
+        status_code=http, content={"error": {"code": code, "message": message, "details": details or {}}}
+    )
+
+
+class StatusPatch(BaseModel):
+    status: str
+    reason: str | None = None
 
 
 @router.post("/upload", status_code=202)
@@ -90,3 +106,19 @@ def get_homework_view(homework_id: str):
         "estimated_minutes": rec.get("estimated_minutes"),
         "priority": rec.get("priority", 1),
     }
+
+
+@router.patch("/{homework_id}/status", status_code=200)
+def patch_homework_status(homework_id: str, payload: StatusPatch):
+    if get_homework(homework_id) is None:
+        return _error("HOMEWORK_NOT_FOUND", "Tarefa não encontrada.", 404)
+    try:
+        rec = transition_homework(homework_id, payload.status)
+    except StatusConflict as exc:
+        return _error(
+            "STATUS_CONFLICT",
+            f"Transição {exc.current} -> {exc.attempted} inválida.",
+            409,
+            details={"current": exc.current, "attempted": exc.attempted, "allowed": exc.allowed},
+        )
+    return {"id": rec["homework_id"], "status": rec["status"], "updated_at": rec.get("updated_at")}
