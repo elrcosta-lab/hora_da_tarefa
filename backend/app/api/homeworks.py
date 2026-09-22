@@ -152,6 +152,29 @@ def export_view(child_id: str | None = None, status: str | None = None,
                     headers={"Content-Disposition": "attachment; filename=homeworks.csv"})
 
 
+@router.get("/{homework_id}/image", status_code=200)
+def get_homework_image_view(homework_id: str, owner: str = Depends(get_current_user_id)):
+    from fastapi.responses import Response
+
+    from app.core.db import session_scope
+    from app.core.storage import get_storage
+    from app.models import HomeworkImage
+
+    denied = _owned_or_error(homework_id, owner)
+    if denied is not None:
+        return denied
+    with session_scope() as s:
+        img = s.query(HomeworkImage).filter_by(homework_id=homework_id).first()
+        if img is None:
+            return _error("IMAGE_NOT_FOUND", "Imagem não encontrada.", 404)
+        key, mime = img.storage_key, img.mime_type
+    try:
+        data = get_storage().get(key)
+    except KeyError:
+        return _error("IMAGE_NOT_FOUND", "Imagem não encontrada.", 404)
+    return Response(content=data, media_type=mime)
+
+
 @router.get("/{homework_id}", status_code=200)
 def get_homework_view(homework_id: str, owner: str = Depends(get_current_user_id)):
     denied = _owned_or_error(homework_id, owner)

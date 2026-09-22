@@ -139,9 +139,9 @@ export default function OnboardingPage() {
         {step === 3 && (
           <>
             <h1 style={{ fontSize: 22, margin: "0 0 4px" }}>Passo 3 — Conecte o Telegram</h1>
-            <p className="muted">Receba lembretes e envie fotos da tarefa pelo chat. Encontre o bot pelo nome configurado no BotFather e envie:</p>
+            <p className="muted">Receba lembretes e envie fotos da tarefa pelo chat.</p>
             <ol className="muted">
-              <li>Abra o Telegram e inicie conversa com o bot</li>
+              <li>Abra o Telegram e inicie conversa com o bot{process.env.NEXT_PUBLIC_TELEGRAM_BOT ? <> <strong>@{process.env.NEXT_PUBLIC_TELEGRAM_BOT}</strong></> : " (nome configurado no BotFather)"}</li>
               <li>Envie o código abaixo (vale uma única vez)</li>
             </ol>
             {!code ? (

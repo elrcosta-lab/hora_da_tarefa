@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, clearTokens, getAccess } from "@/lib/api";
+import Sidebar from "@/components/Sidebar";
 
 type Child = { id: string; name: string; grade_level?: string | null };
 type TaskItem = {
@@ -48,6 +49,7 @@ export default function DashboardPage() {
   const [file, setFile] = useState<File | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
   // revisão RF-06
   const [reviewId, setReviewId] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
@@ -85,7 +87,10 @@ export default function DashboardPage() {
 
   useEffect(() => {
     if (!getAccess()) return;
-    load(childId).catch(() => router.push("/login"));
+    setLoading(true);
+    load(childId)
+      .catch(() => router.push("/login"))
+      .finally(() => setLoading(false));
   }, [childId, load, router]);
 
   async function doUpload(e: React.FormEvent) {
@@ -203,17 +208,7 @@ export default function DashboardPage() {
 
   return (
     <div className="layout">
-      <nav className="sidebar" aria-label="Navegação principal">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <div className="brand"><img src="/icon.svg" alt="" />Hora da Tarefa</div>
-        <a href="/" className="active">Dashboard</a>
-        <a href="/tarefas">Tarefas</a>
-        <a href="/calendario">Calendário</a>
-        <a href="/criancas">Crianças</a>
-        <a href="/configuracoes">Configurações</a>
-        <div className="spacer" />
-        <a href="#" onClick={(e) => { e.preventDefault(); logout(); }}>Sair</a>
-      </nav>
+      <Sidebar active="/" onLogout={logout} />
       <main className="main">
         <div className="topbar">
           <h1>Dashboard</h1>
@@ -303,10 +298,16 @@ export default function DashboardPage() {
         )}
 
         <div className="grid-kpi">
-          <div className="card kpi warn"><div className="value">{kpis.pendentes}</div><div className="label">Pendentes</div></div>
-          <div className="card kpi"><div className="value">{kpis.agendadas}</div><div className="label">Agendadas</div></div>
-          <div className="card kpi danger"><div className="value">{kpis.atrasadas}</div><div className="label">Atrasadas</div></div>
-          <div className="card kpi ok"><div className="value">{kpis.concluidas}</div><div className="label">Concluídas</div></div>
+          {loading ? (
+            [0, 1, 2, 3].map((i) => <div className="card kpi" key={i}><div className="skeleton" style={{ height: 40 }} /><div className="skeleton" style={{ height: 16, marginTop: 8 }} /></div>)
+          ) : (
+            <>
+              <div className="card kpi warn"><div className="value">{kpis.pendentes}</div><div className="label">Pendentes</div></div>
+              <div className="card kpi"><div className="value">{kpis.agendadas}</div><div className="label">Agendadas</div></div>
+              <div className="card kpi danger"><div className="value">{kpis.atrasadas}</div><div className="label">Atrasadas</div></div>
+              <div className="card kpi ok"><div className="value">{kpis.concluidas}</div><div className="label">Concluídas</div></div>
+            </>
+          )}
         </div>
 
         <div className="columns">

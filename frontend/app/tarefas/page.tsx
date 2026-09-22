@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getAccess } from "@/lib/api";
-
+import Sidebar from "@/components/Sidebar";
 type Child = { id: string; name: string };
 type Item = {
   id: string; child_id: string; subject?: string | null; title?: string | null;
@@ -33,6 +33,8 @@ export default function TarefasPage() {
   const [sugs, setSugs] = useState<Suggestion[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [imgUrl, setImgUrl] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [eSubject, setESubject] = useState("");
   const [eTitle, setETitle] = useState("");
@@ -59,12 +61,25 @@ export default function TarefasPage() {
 
   useEffect(() => {
     if (!getAccess()) return;
-    load().catch(() => router.push("/login"));
+    setLoading(true);
+    load()
+      .catch(() => router.push("/login"))
+      .finally(() => setLoading(false));
   }, [load, router]);
 
   async function openDetail(id: string) {
     const d = await api<Detail>(`/homeworks/${id}`);
     setDetail(d);
+    if (imgUrl) URL.revokeObjectURL(imgUrl);
+    setImgUrl(null);
+    try {
+      const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+      const token = getAccess();
+      const r = await fetch(`${base}/v1/homeworks/${id}/image`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (r.ok) setImgUrl(URL.createObjectURL(await r.blob()));
+    } catch { /* sem foto: segue sem imagem */ }
     setEditing(false);
     setESubject(d.subject || "");
     setETitle(d.title || "");
@@ -157,15 +172,7 @@ export default function TarefasPage() {
 
   return (
     <div className="layout">
-      <nav className="sidebar" aria-label="Navegação principal">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <div className="brand"><img src="/icon.svg" alt="" />Hora da Tarefa</div>
-        <a href="/">Dashboard</a>
-        <a href="/tarefas" className="active">Tarefas</a>
-        <a href="/calendario">Calendário</a>
-        <a href="/criancas">Crianças</a>
-        <a href="/configuracoes">Configurações</a>
-      </nav>
+      <Sidebar active="/tarefas" />
       <main className="main">
         <div className="topbar">
           <h1>Tarefas</h1>
@@ -200,7 +207,8 @@ export default function TarefasPage() {
 
         <div className="card">
           <p className="muted">Mostrando {items.length} de {total}</p>
-          {items.length === 0 && <div className="empty">Nenhuma tarefa com esses filtros.</div>}
+          {loading && [0, 1, 2].map((i) => <div className="skeleton" key={i} style={{ height: 64, marginBottom: 10 }} />)}
+          {!loading && items.length === 0 && <div className="empty">Nenhuma tarefa com esses filtros.</div>}
           {items.map((t) => (
             <div className="task" key={t.id}>
               <div className="row">
@@ -220,9 +228,13 @@ export default function TarefasPage() {
             <div className="topbar">
               <h2 style={{ margin: 0 }}>{detail.title || "Tarefa"}</h2>
               <div className="spacer" />
-              <button className="btn-secondary" onClick={() => setDetail(null)}>Fechar</button>
+              <button className="btn-secondary" onClick={() => { setDetail(null); if (imgUrl) { URL.revokeObjectURL(imgUrl); setImgUrl(null); } }}>Fechar</button>
             </div>
             <p><strong>Matéria:</strong> {detail.subject || "—"} · <strong>Status:</strong> {detail.status} · <strong>Entrega:</strong> {fmt(detail.due_at)}</p>
+            {imgUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img src={imgUrl} alt={`Foto da tarefa ${detail.title || ""}`} style={{ width: "100%", maxHeight: 320, objectFit: "contain", borderRadius: 8, background: "#f1f5f9" }} />
+            )}
             {detail.statement && !editing && <p>{detail.statement}</p>}
             {!editing ? (
               <button className="btn-secondary" onClick={() => setEditing(true)}>Revisar dados</button>

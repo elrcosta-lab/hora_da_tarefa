@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getAccess } from "@/lib/api";
+import Sidebar from "@/components/Sidebar";
 
 type Child = { id: string; name: string; grade_level?: string | null };
 type SchedEntry = { weekday: number; start_time: string; end_time: string; subject: string; kind?: string };
@@ -128,15 +129,7 @@ export default function CriancasPage() {
 
   return (
     <div className="layout">
-      <nav className="sidebar" aria-label="Navegação principal">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <div className="brand"><img src="/icon.svg" alt="" />Hora da Tarefa</div>
-        <a href="/">Dashboard</a>
-        <a href="/tarefas">Tarefas</a>
-        <a href="/calendario">Calendário</a>
-        <a href="/criancas" className="active">Crianças</a>
-        <a href="/configuracoes">Configurações</a>
-      </nav>
+      <Sidebar active="/criancas" />
       <main className="main">
         <div className="topbar">
           <h1>Crianças</h1>

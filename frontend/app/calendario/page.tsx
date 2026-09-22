@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getAccess } from "@/lib/api";
+import Sidebar from "@/components/Sidebar";
 
 type Child = { id: string; name: string };
 type Sched = { weekday: number; start_time: string; end_time: string; subject: string };
@@ -93,15 +94,7 @@ export default function CalendarioPage() {
 
   return (
     <div className="layout">
-      <nav className="sidebar" aria-label="Navegação principal">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <div className="brand"><img src="/icon.svg" alt="" />Hora da Tarefa</div>
-        <a href="/">Dashboard</a>
-        <a href="/tarefas">Tarefas</a>
-        <a href="/calendario" className="active">Calendário</a>
-        <a href="/criancas">Crianças</a>
-        <a href="/configuracoes">Configurações</a>
-      </nav>
+      <Sidebar active="/calendario" />
       <main className="main">
         <div className="topbar">
           <h1>Calendário</h1>

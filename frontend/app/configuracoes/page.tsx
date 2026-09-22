@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getAccess, getUserId } from "@/lib/api";
+import Sidebar from "@/components/Sidebar";
 
 type Child = { id: string; name: string };
 type Settings = {
@@ -97,15 +98,7 @@ export default function ConfigPage() {
 
   return (
     <div className="layout">
-      <nav className="sidebar" aria-label="Navegação principal">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <div className="brand"><img src="/icon.svg" alt="" />Hora da Tarefa</div>
-        <a href="/">Dashboard</a>
-        <a href="/tarefas">Tarefas</a>
-        <a href="/calendario">Calendário</a>
-        <a href="/criancas">Crianças</a>
-        <a href="/configuracoes" className="active">Configurações</a>
-      </nav>
+      <Sidebar active="/configuracoes" />
       <main className="main">
         <div className="topbar">
           <h1>Configurações</h1>
@@ -136,7 +129,7 @@ export default function ConfigPage() {
 
           <div className="card" aria-label="Telegram">
             <h2>Telegram</h2>
-            <p className="muted">Vincule sua conta para enviar fotos e receber lembretes no bot. O código vale uma única vez.</p>
+            <p className="muted">Vincule sua conta{process.env.NEXT_PUBLIC_TELEGRAM_BOT ? <> no bot <strong>@{process.env.NEXT_PUBLIC_TELEGRAM_BOT}</strong></> : ""} para enviar fotos e receber lembretes. O código vale uma única vez.</p>
             <button className="btn-secondary" disabled={busy} onClick={genCode}>Gerar código</button>
             {code && (
               <div style={{ marginTop: 12, padding: 16, background: "#f1f5f9", borderRadius: 8, textAlign: "center" }}>
