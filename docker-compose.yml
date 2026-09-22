@@ -62,7 +62,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://hora:${POSTGRES_PASSWORD:-hora}@postgres:5432/hora_da_tarefa
       REDIS_URL: redis://redis:6379/0
+      STORAGE_BACKEND: s3
       S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: ${S3_BUCKET:-hora-tarefa-images}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?S3_SECRET_KEY ausente no .env}
       OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:?OPENROUTER_API_KEY ausente no .env}
       OPENROUTER_MODEL: ${OPENROUTER_MODEL:-google/gemma-4-26b-a4b-it:free}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-change-me}

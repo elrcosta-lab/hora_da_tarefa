@@ -152,7 +152,7 @@ flowchart LR
 - Fuso: armazenar `timestamptz` (UTC); timezone do usuário em `user.timezone` (default `America/Sao_Paulo`).
 - Enums nativos do Postgres.
 - Dados de menor: ver §10 (LGPD) — nenhum dado sensível do menor além do necessário.
-- **Persistência ativa (F0, 2026-09-22):** stores in-memory removidos; `app/tasks/*` operam via SQLAlchemy (`app/core/db.py`, sessão curta por operação, retorno em dicts) sobre **Postgres 16** (prod/compose) ou **sqlite** (dev/testes via `DATABASE_URL`). Alembic `0001` (tabelas §2) + `0002` (`notification_settings`: toggles 24h/2h + quiet por criança). Bytes brutos do upload ficam em cache transitório em memória até `run_extraction` (migração p/ MinIO pendente).
+- **Persistência ativa (F0, 2026-09-22):** stores in-memory removidos; `app/tasks/*` operam via SQLAlchemy (`app/core/db.py`, sessão curta por operação, retorno em dicts) sobre **Postgres 16** (prod/compose) ou **sqlite** (dev/testes via `DATABASE_URL`). Alembic `0001` (tabelas §2) + `0002` (`notification_settings`: toggles 24h/2h + quiet por criança). Imagens via `StorageProvider` (`app/core/storage.py`: `local` em dev/testes, `s3`/MinIO no compose com `STORAGE_BACKEND=s3`); `homework_image` persiste metadados + `expires_at` (retenção RNF-09/11 via `purge_expired_images`).
 
 ### 2.2 Enums
 

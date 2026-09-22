@@ -1,21 +1,19 @@
-"""Task/fila de extração (SPECS §5 v1.1) — Postgres/SQLite.
+"""Task/fila de extração (SPECS §5 v1.1) — Postgres/SQLite + StorageProvider.
 
 Dedupe por SHA-256: mesma foto nunca reprocessa nem rechama OpenRouter
 (UNIQUE homework_image.homework_id+sha256 + lookup prévio).
-Bytes brutos do upload ficam em cache transitório em memória até a extração
-rodar no mesmo processo (migração p/ MinIO na próxima etapa de storage).
+Bytes em StorageProvider (local/S3); HomeworkImage persiste metadados e
+expires_at (retenção RNF-09/11, purge via purge_expired_images).
 
 Retorna sempre dicts simples (nunca ORM detached).
 """
 import hashlib
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from app.core.db import as_aware, session_scope
-from app.models import Homework
-
-# cache transitório dos bytes até run_extraction (mesmo processo) — ver MinIO pós-F0
-_IMAGES: dict[str, bytes] = {}
+from app.core.storage import get_storage, retention_days
+from app.models import Homework, HomeworkImage
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -59,27 +57,33 @@ def _to_dict(hw: Homework) -> dict:
 def get_or_create_homework(image_bytes: bytes, child_id: str, hint_text: str | None = None) -> tuple[dict, bool]:
     """Retorna (registro, deduplicated). Registro mínimo p/ 202 imediato; extração roda em background."""
     sha = sha256_bytes(image_bytes)
+    mime = detect_mime(image_bytes) or "application/octet-stream"
+    storage = get_storage()
     with session_scope() as s:
-        existing = (
-            s.query(Homework)
-            .filter_by(child_id=child_id)
+        dup = (
+            s.query(HomeworkImage)
+            .join(Homework, Homework.id == HomeworkImage.homework_id)
+            .filter(HomeworkImage.sha256 == sha, Homework.child_id == child_id)
             .order_by(Homework.created_at)
-            .all()
+            .first()
         )
-        for hw in existing:
-            meta = (hw.extraction_json or {}).get("meta", {})
-            if meta.get("image_sha256") == sha:
-                return _to_dict(hw), True
-            # registro ainda processando guarda o sha em hint interno? fallback: compara via _IMAGES
+        if dup is not None:
+            hw = s.get(Homework, dup.homework_id)
+            return _to_dict(hw), True
         hid = str(uuid.uuid4())
         hw = Homework(id=hid, child_id=child_id, status="pendente",
                       extraction_status="processando",
                       extraction_json={"meta": {"image_sha256": sha, "hint_text": hint_text}})
         s.add(hw)
         s.flush()
+        storage_key = f"original/{hid}.jpg"
+        storage.put(storage_key, image_bytes, mime)
+        s.add(HomeworkImage(id=str(uuid.uuid4()), homework_id=hid, storage_key=storage_key,
+                            mime_type=mime, size_bytes=len(image_bytes), sha256=sha,
+                            expires_at=datetime.now(timezone.utc) + timedelta(days=retention_days())))
+        s.flush()
         rec = _to_dict(hw)
         rec["hint_text"] = hint_text
-        _IMAGES[hid] = image_bytes
         return rec, False
 
 
@@ -111,7 +115,7 @@ def _parse_result_due(due_str: str | None):
 
 
 def run_extraction(homework_id: str, client=None) -> dict | None:
-    """Background: anonimiza→OpenRouter→atualiza registro. Idempotente por homework_id."""
+    """Background: storage→anonimiza→OpenRouter→atualiza registro. Idempotente por homework_id."""
     from app.services.vision_openrouter import ExtractionFailed, OpenRouterRateLimited, extract_homework
 
     with session_scope() as s:
@@ -120,8 +124,19 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
             return None
         if hw.extraction_status in ("ok", "baixa_confianca", "descartada"):
             return _to_dict(hw)
-        image_bytes = _IMAGES.get(homework_id)
-        if image_bytes is None:
+        img = s.query(HomeworkImage).filter_by(homework_id=homework_id).first()
+        if img is None:
+            hw.extraction_status = "falhou"
+            s.flush()
+            return _to_dict(hw)
+        try:
+            image_bytes = get_storage().get(img.storage_key)
+        except KeyError:
+            hw.extraction_status = "falhou"
+            meta = dict((hw.extraction_json or {}).get("meta", {}))
+            meta["last_error"] = "IMAGE_MISSING no storage"
+            hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
+            s.flush()
             return _to_dict(hw)
         hint = (hw.extraction_json or {}).get("meta", {}).get("hint_text")
         try:
@@ -167,9 +182,38 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
 
 def clear_store() -> None:
     """Apenas testes."""
+    from app.core.storage import get_storage as _get_storage
+
     with session_scope() as s:
+        imgs = s.query(HomeworkImage).all()
+        keys = [i.storage_key for i in imgs]
+        s.query(HomeworkImage).delete()
         s.query(Homework).delete()
-    _IMAGES.clear()
+    storage = _get_storage()
+    for k in keys:
+        try:
+            storage.delete(k)
+        except Exception:
+            pass
+
+
+def purge_expired_images(now: datetime | None = None) -> int:
+    """Cron LGPD/RNF-11: apaga bytes + linha de imagens com expires_at vencido. Retorna removidas."""
+    now = now or datetime.now(timezone.utc)
+    storage = get_storage()
+    removed = 0
+    with session_scope() as s:
+        rows = s.query(HomeworkImage).all()
+        for img in rows:
+            exp = as_aware(img.expires_at)
+            if exp is not None and exp <= now:
+                try:
+                    storage.delete(img.storage_key)
+                except Exception:
+                    pass
+                s.delete(img)
+                removed += 1
+    return removed
 
 
 def update_homework_fields(homework_id: str, **fields) -> dict:
