@@ -1,7 +1,9 @@
 """FastAPI app (SPECS §3.1 v1.1)."""
 from contextlib import asynccontextmanager
+import os
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
 from app.api.children import router as children_router
@@ -28,6 +30,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Hora da Tarefa", version="1.1.0", lifespan=lifespan)
+
+_origins = [o.strip() for o in os.environ.get(
+    "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(Unauthorized)
