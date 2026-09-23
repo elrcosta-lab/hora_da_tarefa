@@ -270,7 +270,16 @@ def handle_update(update: dict) -> dict:
         return {"ok": True, "homework_id": rec["homework_id"], "deduplicated": dedup}
 
     if text.startswith("/start"):
-        _send(chat_id, _render_start(name, _link_code(chat_id)))
+        owner = (_resolve_user(telegram_user_id) or {}).get("user_id")
+        actives = [r for r in list_homeworks(owner_user_id=owner)
+                   if r.get("status") in ("pendente", "agendada", "em_andamento", "atrasada")]
+        late = [r for r in actives if r.get("status") == "atrasada"]
+        if not actives:
+            _send(chat_id, f"Olá, {name}! 👋 Nenhuma tarefa ativa. Envie a foto da próxima lição e eu organizo. 🎉")
+        else:
+            _send(chat_id, f"Olá, {name}! 👋 Você tem {len(actives)} tarefa(s) ativa(s)"
+                           f"{f', {len(late)} atrasada(s) ⚠️' if late else ''}.\n"
+                           f"Envie uma foto nova ou use /tarefas, /hoje e /concluir <id>.")
         return {"ok": True}
     if text.startswith("/ajuda") or text.startswith("/help"):
         _send(chat_id, "Comandos: /start /ajuda /hoje /tarefas /criancas /concluir <id>")

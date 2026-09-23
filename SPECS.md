@@ -982,12 +982,20 @@ rechama a API. `GET /v1/usage` soma tokens e estima US$ por conta
 
 ### 6.3 Templates de mensagem
 
-**Boas-vindas `/start`**
+**Boas-vindas `/start` (usuário sem vínculo)**
 ```
 Olá, {{name}}! 👋 Eu sou o Hora da Tarefa.
 Envie a foto da tarefa de casa e eu organizo a agenda do seu filho.
 
 Para vincular sua conta, use o código: `{{link_code}}`
+```
+
+**Retorno `/start` (usuário já vinculado)** — não reenvia código; mostra resumo + atalhos:
+```
+Olá de volta, {{name}}! 👋
+Você tem {{n}} tarefa(s) ativa(s).
+
+Comandos: /tarefas · /hoje · /criancas · /ajuda
 ```
 
 **Sugestão inicial (após extração)**

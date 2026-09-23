@@ -116,6 +116,21 @@ def test_dedupe_same_update_id_ignored():
     assert sent_count(9) == 1
 
 
+def test_start_linked_shows_welcome_back_not_code():
+    _link(11)
+    c = _client()
+    r = c.post("/v1/telegram/webhook", headers=_headers(), json={
+        "update_id": 41,
+        "message": {"message_id": 5, "from": {"id": 11, "first_name": "Pai"}, "chat": {"id": 11}, "text": "/start"},
+    })
+    assert r.status_code == 200
+    from app.bot.handlers import last_sent
+
+    sent = last_sent(11) or ""
+    assert "código" not in sent.lower()
+    assert "Pai" in sent or "tarefa" in sent.lower()
+
+
 def test_concluir_command_updates_status():
     from tests.conftest import make_auth
 
