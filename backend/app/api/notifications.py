@@ -56,6 +56,15 @@ class SettingsIn(BaseModel):
     quiet_end: str | None = None
 
 
+@router.get("/settings", status_code=200)
+def get_settings_view(child_id: str, owner: str = Depends(get_current_user_id)):
+    if R.get_child(child_id) is None:
+        return _err("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
+    if not R.owns(child_id, owner):
+        return _err("FORBIDDEN", "Sem acesso a esta criança.", 403)
+    return {"child_id": child_id, **N.get_settings(child_id)}
+
+
 @router.post("/settings", status_code=200)
 def update_settings_view(payload: SettingsIn, owner: str = Depends(get_current_user_id)):
     if R.get_child(payload.child_id) is None:

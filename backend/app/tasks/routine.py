@@ -194,6 +194,14 @@ def list_activities(child_id: str) -> list[dict]:
         return [_activity_to_dict(x) for x in rows]
 
 
+def delete_activity(child_id: str, activity_id: str) -> None:
+    with session_scope() as s:
+        row = s.get(Activity, activity_id)
+        if row is None or row.child_id != child_id:
+            raise NotFound(activity_id)
+        s.delete(row)
+
+
 def get_agenda(child_id: str) -> dict:
     if get_child(child_id) is None:
         raise NotFound(child_id)

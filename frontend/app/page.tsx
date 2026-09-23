@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, clearTokens, getAccess } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
@@ -60,6 +60,8 @@ export default function DashboardPage() {
   const [rMinutes, setRMinutes] = useState("40");
   const [rPriority, setRPriority] = useState("1");
   const [rSugs, setRSugs] = useState<{ rank: number; start_at: string; end_at: string; score: number; reason: string }[]>([]);
+  const pollAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => pollAbort.current?.abort(), []);
 
   useEffect(() => {
     if (!getAccess()) router.push("/login");
@@ -110,28 +112,43 @@ export default function DashboardPage() {
       setFile(null);
       setReviewId(up.homework_id);
       setReviewing(true);
-      // polling da extração (RF-06): até sair de "processando"
-      for (let i = 0; i < 20; i++) {
-        await new Promise((r) => setTimeout(r, 3000));
-        const d = await api<{
-          subject?: string | null; title?: string | null; statement?: string | null;
-          due_at?: string | null; estimated_minutes?: number | null; priority?: number;
-          extraction_status: string;
-        }>(`/homeworks/${up.homework_id}`);
-        if (d.extraction_status !== "processando") {
-          setRSubject(d.subject || "");
-          setRTitle(d.title || "");
-          setRStatement(d.statement || "");
-          setRDue(d.due_at ? d.due_at.slice(0, 10) : "");
-          setRMinutes(String(d.estimated_minutes || 40));
-          setRPriority(String(d.priority ?? 1));
-          setMsg(
-            d.extraction_status === "ok"
-              ? "Confira os dados extraídos e confirme. ✅"
-              : "A IA ficou em dúvida — revise os campos abaixo. 🔍"
-          );
-          break;
+      // polling da extração (RF-06): até sair de "processando", cancelável ao navegar
+      pollAbort.current?.abort();
+      const ctl = new AbortController();
+      pollAbort.current = ctl;
+      try {
+        for (let i = 0; i < 20; i++) {
+          await new Promise((r, rej) => {
+            const t = setTimeout(r, 3000);
+            ctl.signal.addEventListener("abort", () => {
+              clearTimeout(t);
+              rej(new DOMException("cancelado", "AbortError"));
+            });
+          });
+          const d = await api<{
+            subject?: string | null; title?: string | null; statement?: string | null;
+            due_at?: string | null; estimated_minutes?: number | null; priority?: number;
+            extraction_status: string;
+          }>(`/homeworks/${up.homework_id}`);
+          if (d.extraction_status !== "processando") {
+            setRSubject(d.subject || "");
+            setRTitle(d.title || "");
+            setRStatement(d.statement || "");
+            setRDue(d.due_at ? d.due_at.slice(0, 10) : "");
+            setRMinutes(String(d.estimated_minutes || 40));
+            setRPriority(String(d.priority ?? 1));
+            setMsg(
+              d.extraction_status === "ok"
+                ? "Confira os dados extraídos e confirme. ✅"
+                : "A IA ficou em dúvida — revise os campos abaixo. 🔍"
+            );
+            break;
+          }
         }
+      } catch (err) {
+        if (!(err instanceof DOMException && err.name === "AbortError")) throw err;
+      } finally {
+        if (pollAbort.current === ctl) pollAbort.current = null;
       }
       await load(childId);
     } catch (err) {
@@ -305,7 +322,7 @@ export default function DashboardPage() {
               <div className="card kpi warn"><div className="value">{kpis.pendentes}</div><div className="label">Pendentes</div></div>
               <div className="card kpi"><div className="value">{kpis.agendadas}</div><div className="label">Agendadas</div></div>
               <div className="card kpi danger"><div className="value">{kpis.atrasadas}</div><div className="label">Atrasadas</div></div>
-              <div className="card kpi ok"><div className="value">{kpis.concluidas}</div><div className="label">Concluídas</div></div>
+              <div className="card kpi ok"><div className="value">{kpis.concluidas}</div><div className="label">Concluídas (total)</div></div>
             </>
           )}
         </div>
@@ -325,13 +342,21 @@ export default function DashboardPage() {
               </>
             )}
             <div className="timeline">
-              {(today?.due_today || []).map((t) => (
-                <div className="slot" key={t.id}>
-                  <div className="hour">{t.scheduled_start ? fmtDue(t.scheduled_start) : fmtDue(t.due_at)}</div>
+              {(today?.scheduled_today || []).map((t) => (
+                <div className="slot" key={`s-${t.id}`}>
+                  <div className="hour">{fmtDue(t.scheduled_start)}</div>
                   <div><strong>{t.subject}</strong> — {t.title}</div>
                 </div>
               ))}
-              {(today?.due_today || []).length === 0 && <div className="empty">Nada agendado para hoje.</div>}
+              {(today?.due_today || []).filter((t) => !(today?.scheduled_today || []).some((s) => s.id === t.id)).map((t) => (
+                <div className="slot" key={t.id}>
+                  <div className="hour">{fmtDue(t.due_at)}</div>
+                  <div><strong>{t.subject}</strong> — {t.title} <span className="muted">(vence hoje)</span></div>
+                </div>
+              ))}
+              {(today?.due_today || []).length === 0 && (today?.scheduled_today || []).length === 0 && (
+                <div className="empty">Nada agendado para hoje.</div>
+              )}
             </div>
           </section>
         </div>

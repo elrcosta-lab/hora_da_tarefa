@@ -15,7 +15,6 @@ type Task = {
   id: string; subject?: string | null; title?: string | null; due_at?: string | null;
   status: string; scheduled_start?: string | null; scheduled_end?: string | null;
 };
-
 const DAYS = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
 function mondayOf(offsetWeeks: number): Date {
@@ -134,10 +133,14 @@ export default function CalendarioPage() {
                     </div>
                   ))}
                   {dayTasks.map((t) => (
-                    <div key={t.id} style={{ background: "#dcfce7", borderLeft: "4px solid var(--secondary)", borderRadius: 6, padding: "4px 6px", fontSize: 12 }}>
+                    <a
+                      key={t.id} href={`/tarefas?task=${t.id}`}
+                      style={{ background: "#dcfce7", borderLeft: "4px solid var(--secondary)", borderRadius: 6, padding: "4px 6px", fontSize: 12, textDecoration: "none", color: "inherit", display: "block" }}
+                      aria-label={`Abrir ${t.title || "tarefa"}`}
+                    >
                       <strong>{t.scheduled_start ? hm(t.scheduled_start) : `Entrega ${hm(t.due_at)}`}</strong><br />
                       {t.subject ? `[${t.subject}] ` : ""}{t.title}
-                    </div>
+                    </a>
                   ))}
                   {daySched.length + dayActs.length + dayTasks.length === 0 && (
                     <span className="muted" style={{ fontSize: 12 }}>Livre</span>

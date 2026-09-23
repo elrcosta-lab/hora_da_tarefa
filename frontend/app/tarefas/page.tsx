@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, getAccess } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
 type Child = { id: string; name: string };
@@ -22,7 +22,16 @@ function fmt(iso?: string | null) {
 }
 
 export default function TarefasPage() {
+  return (
+    <Suspense>
+      <TarefasInner />
+    </Suspense>
+  );
+}
+
+function TarefasInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [children, setChildren] = useState<Child[]>([]);
   const [items, setItems] = useState<Item[]>([]);
   const [total, setTotal] = useState(0);
@@ -110,8 +119,7 @@ export default function TarefasPage() {
   useEffect(() => {
     if (!getAccess()) return;
     loadAbort.current?.abort();
-    const ctl = new AbortController();
-    loadAbort.current = ctl;
+    const ctl = new AbortController();    loadAbort.current = ctl;
     setLoading(true);
     load(ctl.signal)
       .catch((err) => {
@@ -123,6 +131,15 @@ export default function TarefasPage() {
       });
     return () => ctl.abort();
   }, [load, router]);
+
+  // deep-link do calendário (?task=<id>): abre o detalhe direto
+  const deepTask = searchParams.get("task");
+  useEffect(() => {
+    if (deepTask && getAccess()) {
+      openDetail(deepTask).catch(() => {});
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deepTask]);
 
   async function openDetail(id: string) {
     const req = ++detailReq.current;

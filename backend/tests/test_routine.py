@@ -98,6 +98,20 @@ def test_activities_and_agenda():
     assert ag.json()["activities"][0]["title"] == "Natação"
 
 
+def test_activity_delete_and_404():
+    c = _client()
+    h = _auth(c)
+    cid = c.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    aid = c.post(f"/v1/children/{cid}/activities", json={
+        "title": "Natação", "weekday": 3, "start_time": "17:00", "end_time": "18:00",
+    }, headers=h).json()["id"]
+    assert c.delete(f"/v1/children/{cid}/activities/{aid}", headers=h).status_code == 200
+    assert c.get(f"/v1/children/{cid}/agenda", headers=h).json()["activities"] == []
+    assert c.delete(f"/v1/children/{cid}/activities/{aid}", headers=h).status_code == 404
+    h2, _ = make_auth(c, name="Outro")
+    assert c.delete(f"/v1/children/{cid}/activities/{aid}", headers=h2).status_code in (403, 404)
+
+
 def test_suggestions_respect_real_routine():
     from app.schemas.extraction import ExtractionResult
 

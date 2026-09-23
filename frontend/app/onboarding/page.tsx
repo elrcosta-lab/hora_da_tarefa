@@ -20,6 +20,30 @@ export default function OnboardingPage() {
     if (!getAccess()) router.push("/login");
   }, [router]);
 
+  // retomada: refresh no meio do fluxo não perde o filho nem o passo
+  useEffect(() => {
+    try {
+      const cid = localStorage.getItem("hdt.onboard.child") || "";
+      const st = Number(localStorage.getItem("hdt.onboard.step") || 1);
+      if (cid) setChildId(cid);
+      if (st >= 1 && st <= 3) setStep(st);
+    } catch { /* privado: segue do zero */ }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem("hdt.onboard.child", childId);
+      localStorage.setItem("hdt.onboard.step", String(step));
+    } catch { /* privado: sem retomada */ }
+  }, [childId, step]);
+
+  function clearResume() {
+    try {
+      localStorage.removeItem("hdt.onboard.child");
+      localStorage.removeItem("hdt.onboard.step");
+    } catch { /* ok */ }
+  }
+
   // polling do vínculo: mostra confirmação na plataforma assim que o bot vincula
   useEffect(() => {
     if (step !== 3 || linked) return;
@@ -149,6 +173,7 @@ export default function OnboardingPage() {
               + Bloco de aula
             </button>
             <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              <button type="button" className="btn-secondary" disabled={busy} onClick={() => setStep(1)}>Voltar</button>
               <button className="btn-primary" disabled={busy} onClick={() => step2(true)} style={{ flex: 1 }}>Salvar e continuar</button>
               <button className="btn-secondary" disabled={busy} onClick={() => step2(false)}>Pular</button>
             </div>
@@ -176,8 +201,11 @@ export default function OnboardingPage() {
                 <p className="muted" style={{ margin: "4px 0 0" }}>O bot confirmou seu cadastro. Pode começar.</p>
               </div>
             )}
-            <button className="btn-primary" style={{ width: "100%" }} onClick={() => router.push("/")}>
+            <button className="btn-primary" style={{ width: "100%" }} onClick={() => { clearResume(); router.push("/"); }}>
               Começar a usar 🎉
+            </button>
+            <button className="btn-secondary" style={{ width: "100%", marginTop: 8 }} onClick={() => setStep(2)}>
+              Voltar
             </button>
           </>
         )}

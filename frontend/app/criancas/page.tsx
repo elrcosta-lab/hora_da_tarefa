@@ -90,6 +90,7 @@ export default function CriancasPage() {
   }
 
   async function saveSchedules() {
+    if (!window.confirm("Salvar substitui a grade inteira. Continuar?")) return;
     setBusy(true);
     setMsg(null);
     try {
@@ -101,6 +102,20 @@ export default function CriancasPage() {
       await loadAgenda(childId);
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Falha ao salvar grade.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteActivity(id: string, title: string) {
+    if (!window.confirm(`Excluir "${title}"? O motor deixará de respeitar esse horário.`)) return;
+    setBusy(true);
+    try {
+      await api(`/children/${childId}/activities/${id}`, { method: "DELETE" });
+      setMsg("Atividade excluída.");
+      await loadAgenda(childId);
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Falha ao excluir.");
     } finally {
       setBusy(false);
     }
@@ -272,6 +287,11 @@ export default function CriancasPage() {
                         {a.is_blocking && <span className="pill pill-agendada">bloqueia agenda</span>}
                       </div>
                       <div className="meta">Deslocamento: {a.travel_before_min} min antes · {a.recurrence}</div>
+                      <div style={{ marginTop: 6 }}>
+                        <button className="btn-secondary" style={{ minHeight: 36 }} disabled={busy} onClick={() => deleteActivity(a.id, a.title)}>
+                          Excluir
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>

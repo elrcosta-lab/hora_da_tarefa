@@ -91,6 +91,18 @@ def add_activity_view(child_id: str, payload: ActivityIn, owner: str = Depends(g
         return _err("VALIDATION_ERROR", str(exc), 400)
 
 
+@router.delete("/{child_id}/activities/{activity_id}", status_code=200)
+def delete_activity_view(child_id: str, activity_id: str, owner: str = Depends(get_current_user_id)):
+    denied = _owned_or_error(child_id, owner)
+    if denied is not None:
+        return denied
+    try:
+        R.delete_activity(child_id, activity_id)
+    except R.NotFound:
+        return _err("ACTIVITY_NOT_FOUND", "Atividade não encontrada.", 404)
+    return {"deleted": activity_id}
+
+
 @router.get("/{child_id}/agenda", status_code=200)
 def get_agenda_view(child_id: str, owner: str = Depends(get_current_user_id)):
     denied = _owned_or_error(child_id, owner)

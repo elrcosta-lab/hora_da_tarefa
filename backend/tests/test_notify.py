@@ -112,6 +112,23 @@ def test_quiet_hours_pushes_to_0700():
     assert h == 7
 
 
+def test_settings_get_returns_server_state():
+    from app.main import app
+
+    client = TestClient(app)
+    h, cid = _setup(client)
+    r = client.get("/v1/notifications/settings", params={"child_id": cid}, headers=h)
+    assert r.status_code == 200, r.text
+    assert r.json() == {"child_id": cid, "lembrete_24h": True, "lembrete_2h": True,
+                        "quiet_start": "21:30", "quiet_end": "07:00"}
+    client.post("/v1/notifications/settings",
+                json={"child_id": cid, "lembrete_2h": False}, headers=h)
+    r = client.get("/v1/notifications/settings", params={"child_id": cid}, headers=h)
+    assert r.json()["lembrete_2h"] is False
+    h2, _ = make_auth(client, name="Outro")
+    assert client.get("/v1/notifications/settings", params={"child_id": cid}, headers=h2).status_code == 403
+
+
 def test_atraso_scheduled_when_overdue_and_list_endpoint():
     from app.tasks import notify as N
 

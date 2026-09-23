@@ -20,6 +20,7 @@ export default function ConfigPage() {
   const [qStart, setQStart] = useState("21:30");
   const [qEnd, setQEnd] = useState("07:00");
   const [code, setCode] = useState<string | null>(null);
+  const [linked, setLinked] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -37,6 +38,35 @@ export default function ConfigPage() {
     if (!getAccess()) return;
     load().catch(() => router.push("/login"));
   }, [load, router]);
+
+  // lê o estado real do servidor ao trocar de criança (nada de defaults ilusórios)
+  useEffect(() => {
+    if (!childId || !getAccess()) return;
+    api<Settings>(`/notifications/settings?child_id=${childId}`)
+      .then((s) => {
+        setS24(s.lembrete_24h);
+        setS2(s.lembrete_2h);
+        setQStart(s.quiet_start);
+        setQEnd(s.quiet_end);
+      })
+      .catch(() => {});
+  }, [childId]);
+
+  // polling de vínculo: confirma quando o bot consumir o código
+  useEffect(() => {
+    if (!getAccess()) return;
+    let alive = true;
+    const id = setInterval(async () => {
+      try {
+        const s = await api<{ linked: boolean }>("/auth/telegram/status");
+        if (alive && s.linked) setLinked(true);
+      } catch { /* próximo ciclo */ }
+    }, 5000);
+    api<{ linked: boolean }>("/auth/telegram/status")
+      .then((s) => { if (alive) setLinked(s.linked); })
+      .catch(() => {});
+    return () => { alive = false; clearInterval(id); };
+  }, []);
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -128,10 +158,16 @@ export default function ConfigPage() {
           </form>
 
           <div className="card" aria-label="Telegram">
-            <h2>Telegram</h2>
-            <p className="muted">Vincule sua conta{process.env.NEXT_PUBLIC_TELEGRAM_BOT ? <> no bot <strong>@{process.env.NEXT_PUBLIC_TELEGRAM_BOT}</strong></> : ""} para enviar fotos e receber lembretes. O código vale uma única vez.</p>
-            <button className="btn-secondary" disabled={busy} onClick={genCode}>Gerar código</button>
-            {code && (
+            <h2>Telegram {linked && <span className="pill pill-concluida">conectado</span>}</h2>
+            {linked ? (
+              <p className="muted">Conta vinculada — o bot já pode enviar fotos e lembretes.</p>
+            ) : (
+              <>
+                <p className="muted">Vincule sua conta{process.env.NEXT_PUBLIC_TELEGRAM_BOT ? <> no bot <strong>@{process.env.NEXT_PUBLIC_TELEGRAM_BOT}</strong></> : ""} para enviar fotos e receber lembretes. O código vale uma única vez.</p>
+                <button className="btn-secondary" disabled={busy} onClick={genCode}>Gerar código</button>
+              </>
+            )}
+            {code && !linked && (
               <div style={{ marginTop: 12, padding: 16, background: "#f1f5f9", borderRadius: 8, textAlign: "center" }}>
                 <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: 8 }}>{code}</div>
                 <p className="muted">Envie esse código no chat do bot (ou /start {code}).</p>
