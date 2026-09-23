@@ -77,7 +77,25 @@ def _focus_factor(start: datetime) -> float:
     return 0.2
 
 
-def _score(slot_start, slot_end, duration, homework, now, due, busy) -> float:
+def _in_parent_window(slot_start, slot_end, availability) -> bool:
+    """Slot contido numa janela do responsável (mesmo weekday)."""
+    for w in availability or []:
+        try:
+            if int(w.get("weekday", -1)) != slot_start.weekday():
+                continue
+            ws, we = _parse_hm(w["start_time"]), _parse_hm(w["end_time"])
+            a = datetime(slot_start.year, slot_start.month, slot_start.day,
+                         ws.hour, ws.minute, tzinfo=slot_start.tzinfo)
+            b = datetime(slot_start.year, slot_start.month, slot_start.day,
+                         we.hour, we.minute, tzinfo=slot_start.tzinfo)
+            if a <= slot_start and slot_end <= b:
+                return True
+        except Exception:
+            continue
+    return False
+
+
+def _score(slot_start, slot_end, duration, homework, now, due, busy, availability=None) -> float:
     total_sec = max(1.0, (due - now).total_seconds())
     remain_sec = max(0.0, (due - slot_start).total_seconds())
     s = 30.0 * max(0.0, min(1.0, remain_sec / total_sec))
@@ -94,12 +112,15 @@ def _score(slot_start, slot_end, duration, homework, now, due, busy) -> float:
             break
     s += 10.0 if gap_ok else 4.0
     s += 15.0 * (float(homework.get("priority", 1)) / 2.0)
+    if _in_parent_window(slot_start, slot_end, availability):
+        s += 12.0  # responsável disponível para acompanhar
     if slot_start.date() == now.date() and duration > 45:
         s -= 15.0
     return max(0.0, min(100.0, s))
 
 
-def suggest_slots(homework, schedules=None, activities=None, preferences=None, now=None, limit=5):
+def suggest_slots(homework, schedules=None, activities=None, preferences=None, now=None, limit=5,
+                  availability=None):
     """Retorna até `limit` slots [{start_at, end_at, score, reason, rank}]."""
     schedules = schedules or []
     activities = activities or []
@@ -168,9 +189,11 @@ def suggest_slots(homework, schedules=None, activities=None, preferences=None, n
         while cur + timedelta(minutes=duration) <= win_end:
             s, e = cur, cur + timedelta(minutes=duration)
             if not any(_overlaps(s, e, bs, be) for bs, be in busy):
-                score = _score(s, e, duration, homework, now, due, busy)
+                score = _score(s, e, duration, homework, now, due, busy, availability)
                 days_left = (due.date() - s.date()).days
                 reason = f"Livre; entrega em {days_left}d; foco {'alto' if 14 <= s.hour < 18 else 'normal'}"
+                if _in_parent_window(s, e, availability):
+                    reason += "; responsável disponível"
                 candidates.append({"start_at": s, "end_at": e, "score": round(score, 1), "reason": reason})
             cur += timedelta(minutes=GRID_MINUTES)
         d += timedelta(days=1)

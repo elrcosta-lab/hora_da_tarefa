@@ -6,7 +6,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     OPENROUTER_API_KEY: str = "sk-or-v1-CHANGE_ME"
-    OPENROUTER_MODEL: str = "google/gemma-4-26b-a4b-it:free"
+    OPENROUTER_MODEL: str = "nex-agi/nex-n2.5-mini:free"
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_SITE_URL: str = "https://horadatarefa.app"
     OPENROUTER_APP_NAME: str = "Hora da Tarefa"

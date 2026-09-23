@@ -40,7 +40,7 @@ def _mock_success():
         confidence=0.91,
         needs_review=False,
         extraction_status="ok",
-        meta={"engine": "google/gemma-4-26b-a4b-it:free", "provider": "openrouter"},
+        meta={"engine": "nex-agi/nex-n2.5-mini:free", "provider": "openrouter"},
     )
 
 

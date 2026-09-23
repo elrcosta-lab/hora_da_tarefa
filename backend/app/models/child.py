@@ -67,3 +67,17 @@ class Activity(Base):
     is_blocking: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+
+class ParentAvailability(Base):
+    """Janelas em que o responsável pode acompanhar a tarefa (importadas por inferência)."""
+
+    __tablename__ = "parent_availability"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid)
+    child_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    weekday: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    start_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    end_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)

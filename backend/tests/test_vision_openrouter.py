@@ -1,4 +1,4 @@
-"""TDD RED — Extração via OpenRouter gemma-4-26b-a4b-it:free (SPECS §5 v1.1).
+"""TDD RED — Extração via OpenRouter nex-n2.5-mini:free (SPECS §5 v1.1).
 
 Cobre:
 - RF-05: anonimização local (resize ≤1600, strip EXIF, SHA-256) antes de qualquer chamada externa
@@ -41,7 +41,7 @@ def test_anonymize_resizes_and_strips_exif_and_hashes():
     assert img.getexif() is not None and len(dict(img.getexif())) == 0
 
 
-def test_extract_calls_openrouter_with_gemma_free_and_parses_json():
+def test_extract_calls_openrouter_with_nex_free_and_parses_json():
     from app.services.vision_openrouter import extract_homework
 
     fake_json = {
@@ -65,7 +65,7 @@ def test_extract_calls_openrouter_with_gemma_free_and_parses_json():
 
     # chamada OpenRouter correta (SPECS §5.2 E2)
     _, kwargs = mock_client.chat.completions.create.call_args
-    assert kwargs["model"] == "google/gemma-4-26b-a4b-it:free"
+    assert kwargs["model"] == "nex-agi/nex-n2.5-mini:free"
     assert kwargs["response_format"] == {"type": "json_object"}
     assert kwargs["temperature"] == 0.1
     assert kwargs["max_tokens"] == 2048
@@ -80,7 +80,7 @@ def test_extract_calls_openrouter_with_gemma_free_and_parses_json():
     assert result.subject == "Matemática"
     assert result.confidence == pytest.approx(0.91)
     assert result.needs_review is False
-    assert result.meta["engine"] == "google/gemma-4-26b-a4b-it:free"
+    assert result.meta["engine"] == "nex-agi/nex-n2.5-mini:free"
 
 
 def test_low_confidence_marks_needs_review():

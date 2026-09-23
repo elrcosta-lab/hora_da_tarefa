@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 
 from app.core.db import session_scope
-from app.models import Activity, Child, SchoolSchedule
+from app.models import Activity, Child, ParentAvailability, SchoolSchedule
 
 
 class NotFound(Exception):
@@ -185,7 +185,41 @@ def get_agenda(child_id: str) -> dict:
     if get_child(child_id) is None:
         raise NotFound(child_id)
     return {"child_id": child_id, "schedules": list_schedules(child_id),
-            "activities": list_activities(child_id)}
+            "activities": list_activities(child_id),
+            "availability": list_availability(child_id)}
+
+
+def _availability_to_dict(a: ParentAvailability) -> dict:
+    return {"id": a.id, "child_id": a.child_id, "weekday": a.weekday,
+            "start_time": a.start_time, "end_time": a.end_time}
+
+
+def save_availability(child_id: str, entries: list[dict], replace: bool = False) -> dict:
+    """Salva janelas do responsável (import por inferência ou manual)."""
+    with session_scope() as s:
+        if s.get(Child, child_id) is None:
+            raise NotFound(child_id)
+        if replace:
+            s.query(ParentAvailability).filter_by(child_id=child_id).delete()
+            s.flush()
+        created = 0
+        for e in entries:
+            wd = _check_weekday(e.get("weekday"))
+            st = _parse_hm(e.get("start_time", ""))
+            en = _parse_hm(e.get("end_time", ""))
+            if en <= st:
+                raise Validation("end_time deve ser maior que start_time")
+            s.add(ParentAvailability(id=str(uuid.uuid4()), child_id=child_id, weekday=wd,
+                                     start_time=e.get("start_time"), end_time=e.get("end_time")))
+            created += 1
+        return {"child_id": child_id, "created": created, "replaced": bool(replace)}
+
+
+def list_availability(child_id: str) -> list[dict]:
+    with session_scope() as s:
+        rows = s.query(ParentAvailability).filter_by(child_id=child_id).order_by(
+            ParentAvailability.weekday, ParentAvailability.start_time).all()
+        return [_availability_to_dict(x) for x in rows]
 
 
 def clear_routine() -> None:
@@ -193,6 +227,7 @@ def clear_routine() -> None:
     with session_scope() as s:
         s.query(SchoolSchedule).delete()
         s.query(Activity).delete()
+        s.query(ParentAvailability).delete()
         s.query(Child).delete()
 
 

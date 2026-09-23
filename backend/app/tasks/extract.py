@@ -458,10 +458,11 @@ def _parse_due(due, tz):
         return None
 
 
-def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, activities=None) -> list[dict]:
+def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, activities=None,
+                    availability=None) -> list[dict]:
     """Calcula slots via scheduling.suggest_slots e serializa p/ API. Levanta KeyError se inexistente.
 
-    Se schedules/activities não forem passados, usa a rotina real da criança (RF-08).
+    Se schedules/activities/availability não forem passados, usa a rotina real da criança (RF-08).
     """
     from datetime import datetime as _dt
     from zoneinfo import ZoneInfo
@@ -471,7 +472,7 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
     rec = get_homework(homework_id)
     if rec is None:
         raise KeyError(homework_id)
-    if schedules is None or activities is None:
+    if schedules is None or activities is None or availability is None:
         try:
             from app.tasks import routine as _R
 
@@ -491,9 +492,15 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
                     for a in _R.list_activities(child_id)
                     if a.get("weekday") is not None
                 ]
+            if availability is None:
+                availability = [
+                    {"weekday": w["weekday"], "start_time": w["start_time"], "end_time": w["end_time"]}
+                    for w in _R.list_availability(child_id)
+                ]
         except Exception:
             schedules = schedules or []
             activities = activities or []
+            availability = availability or []
     tz = ZoneInfo("America/Sao_Paulo")
     now = now or _dt.now(tz)
     due = _parse_due(rec.get("due_at"), tz) or (now + __import__("datetime").timedelta(days=7))
@@ -503,7 +510,8 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
         "priority": int(rec.get("priority") or 1),
         "subject": rec.get("subject") or "Outro",
     }
-    slots = suggest_slots(hw, schedules=schedules or [], activities=activities or [], now=now, limit=limit)
+    slots = suggest_slots(hw, schedules=schedules or [], activities=activities or [],
+                          availability=availability or [], now=now, limit=limit)
     return [
         {
             "rank": s["rank"],

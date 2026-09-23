@@ -127,6 +127,41 @@ export default function CriancasPage() {
     }
   }
 
+  // importação por inferência (texto/foto)
+  const [impText, setImpText] = useState("");
+  const [impFile, setImpFile] = useState<File | null>(null);
+  const [impReplace, setImpReplace] = useState(false);
+
+  async function importRoutine(e: React.FormEvent) {
+    e.preventDefault();
+    if (!childId || (!impText.trim() && !impFile)) {
+      setMsg("Cole o texto da rotina ou anexe a foto da grade.");
+      return;
+    }
+    setBusy(true);
+    setMsg(null);
+    try {
+      const form = new FormData();
+      if (impText.trim()) form.append("text", impText.trim());
+      if (impFile) form.append("file", impFile);
+      form.append("replace", String(impReplace));
+      const r = await api<{
+        schedules_created: number; activities_created: number; availability_saved: number;
+        needs_review: boolean; warnings: string[];
+      }>(`/children/${childId}/routine/import`, { method: "POST", body: form });
+      setImpText("");
+      setImpFile(null);
+      await loadAgenda(childId);
+      setMsg(`Rotina importada: ${r.schedules_created} aulas, ${r.activities_created} atividades, ${r.availability_saved} janelas do responsável.` +
+        (r.needs_review ? " Confira os dados. 🔍" : " ✅") +
+        (r.warnings.length > 0 ? ` (${r.warnings.length} trechos ignorados)` : ""));
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Falha ao importar.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="layout">
       <Sidebar active="/criancas" />
@@ -144,6 +179,29 @@ export default function CriancasPage() {
           </form>
         </div>
         {msg && <p className="muted" role="status">{msg}</p>}
+
+        {childId && (
+          <div className="card" style={{ marginBottom: 16, borderLeft: "4px solid var(--tertiary)" }} aria-label="Importar rotina">
+            <h2>Importar rotina por foto ou texto ✨</h2>
+            <p className="muted">Cole a grade/horários ou fotografe o bilhete — a IA preenche aulas, atividades e seus horários livres.</p>
+            <form onSubmit={importRoutine}>
+              <textarea
+                rows={3} value={impText} onChange={(e) => setImpText(e.target.value)}
+                placeholder={"Ex.: Aula seg a sex 07:30-12:00. Natação qua 17h-18h. Posso acompanhar seg e qua 18h-20h."}
+                aria-label="Texto da rotina" style={{ width: "100%" }}
+              />
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>
+                <input type="file" accept="image/jpeg,image/png,image/webp" aria-label="Foto da rotina"
+                  onChange={(e) => setImpFile(e.target.files?.[0] || null)} />
+                <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: 13 }}>
+                  <input type="checkbox" checked={impReplace} onChange={(e) => setImpReplace(e.target.checked)} style={{ minHeight: 24, width: 24 }} />
+                  Substituir atual
+                </label>
+                <button className="btn-primary" disabled={busy}>Importar rotina</button>
+              </div>
+            </form>
+          </div>
+        )}
 
         {!childId && <div className="empty">Cadastre uma criança para montar a rotina.</div>}
 
