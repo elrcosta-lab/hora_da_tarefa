@@ -22,10 +22,12 @@ DEFAULT_ADMIN_EMAIL = "elrcostadev@gmail.com"
 
 
 def admin_credentials() -> tuple[str, str]:
-    # Default explícito pedido pelo dono (elrcostadev@gmail.com). Prefira ADMIN_*
-    # no ambiente; TROQUE a senha no 1º login via reset do próprio admin.
-    return (os.environ.get("ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL),
-            os.environ.get("ADMIN_PASSWORD", "Ui4u%80D"))
+    # A1: fail-closed — sem ADMIN_PASSWORD no ambiente, o seed recusa em vez de
+    # usar default público (quem lê o repo saberia a senha do admin).
+    password = os.environ.get("ADMIN_PASSWORD")
+    if not password:
+        raise RuntimeError("ADMIN_PASSWORD ausente — defina no ambiente no boot")
+    return (os.environ.get("ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL), password)
 
 
 def _to_public(u: AppUser) -> dict:

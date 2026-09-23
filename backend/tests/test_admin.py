@@ -37,6 +37,16 @@ def _admin_headers(client, email="admin-red@teste.com"):
     return {"Authorization": f"Bearer {tok['access_token']}"}, admin["user_id"]
 
 
+def test_seed_requires_admin_password(monkeypatch):
+    import os
+
+    from app.tasks import admin as A
+
+    monkeypatch.delenv("ADMIN_PASSWORD", raising=False)
+    with pytest.raises(RuntimeError, match="ADMIN_PASSWORD"):
+        A.ensure_admin()
+
+
 def test_ensure_admin_idempotent_and_promotes():
     from app.tasks import admin as A
     from app.tasks import users as U
