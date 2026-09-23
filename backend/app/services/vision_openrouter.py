@@ -42,6 +42,40 @@ def anonymize_image(image_bytes: bytes, max_side: int = 1600, quality: int = 82)
     return buf.getvalue(), sha
 
 
+# Prompt canônico embutido (a imagem Docker não leva ai/; arquivo faz override p/ iteração local).
+DEFAULT_SYSTEM_PROMPT = """Você é um assistente que lê fotografias de tarefas escolares brasileiras
+e extrai informação estruturada. Responda APENAS com um objeto JSON válido,
+sem texto extra, sem markdown.
+
+Regras:
+- "subject" deve ser uma destas matérias: Matemática, Português, Redação,
+  Ciências, Biologia, Física, Química, História, Geografia, Inglês, Espanhol,
+  Artes, Educação Física, Ensino Religioso, Outro.
+- "due_at": data de entrega no formato YYYY-MM-DD. Se aparecer "sexta",
+  calcule a próxima sexta a partir da data de hoje (America/Sao_Paulo). Se não houver data clara, use null.
+- "title": resumo de até 8 palavras.
+- "statement": enunciado transcrito fielmente da imagem, sem inventar.
+- "estimated_minutes": inteiro; estime pela quantidade de exercícios.
+- "priority": 0=baixa, 1=normal, 2=alta (prova/trabalho = 2).
+- "confidence": 0.0 a 1.0, sua certeza geral.
+- "needs_review": true se qualquer campo crítico incerto.
+- Se a imagem não for uma tarefa escolar, retorne {"is_homework": false, "confidence": 0.9, "needs_review": true}.
+- Omita chaves com valor null para economizar tokens.
+
+Esquema:
+{
+  "is_homework": true,
+  "subject": "string",
+  "title": "string",
+  "statement": "string",
+  "due_at": "YYYY-MM-DD|null",
+  "estimated_minutes": integer|null,
+  "priority": 0|1|2,
+  "confidence": number,
+  "needs_review": boolean
+}"""
+
+
 def _load_system_prompt() -> str:
     here = Path(__file__).resolve()
     # backend/app/services/vision_openrouter.py → raiz/ai/prompts/nex_system.txt
@@ -52,7 +86,7 @@ def _load_system_prompt() -> str:
     for p in candidates:
         if p.exists():
             return p.read_text(encoding="utf-8")
-    return "Extraia a tarefa escolar em JSON válido."
+    return DEFAULT_SYSTEM_PROMPT
 
 
 def _get_client(settings: Settings):
@@ -92,7 +126,8 @@ def _chat_json(client, settings, messages):
     }
     effort = (settings.OPENROUTER_REASONING_EFFORT or "").strip().lower()
     if effort:
-        kwargs["reasoning"] = {"effort": effort}
+        # via extra_body: 'reasoning' não é parâmetro top-level do SDK openai
+        kwargs["extra_body"] = {"reasoning": {"effort": effort}}
     try:
         return client.chat.completions.create(**kwargs)
     except Exception as exc:  # noqa: BLE001

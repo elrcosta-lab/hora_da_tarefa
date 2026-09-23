@@ -69,7 +69,8 @@ def test_extract_calls_openrouter_with_nex_free_and_parses_json():
     assert kwargs["response_format"] == {"type": "json_object"}
     assert kwargs["temperature"] == 0.1
     assert kwargs["max_tokens"] == 1024
-    assert kwargs["reasoning"] == {"effort": "low"}
+    assert kwargs["extra_body"] == {"reasoning": {"effort": "low"}}
+    assert "reasoning" not in kwargs  # nunca top-level: SDK rejeita (TypeError ao vivo)
     # imagem vai em data-URL base64, nunca o original com EXIF
     content = kwargs["messages"][0]["content"]
     kinds = {c["type"] for c in content}
@@ -145,6 +146,50 @@ def test_llm_payload_uses_smaller_image():
                                     max_side=get_settings().AI_LLM_MAX_SIDE, quality=82)
     img = Image.open(io.BytesIO(anonymized))
     assert max(img.size) <= 1024
+
+
+def test_chat_kwargs_accepted_by_real_sdk_signature():
+    """Regressão: kwargs enviados precisam existir na assinatura real do SDK (mocks escondem TypeError)."""
+    import inspect
+
+    import openai
+
+    sig = inspect.signature(openai.resources.chat.completions.Completions.create)
+    params = set(sig.parameters)
+    accepts_kwargs = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+    from unittest.mock import MagicMock
+
+    from app.core.config import get_settings
+
+    captured: dict = {}
+
+    def fake_create(**kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("stop")
+
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.side_effect = fake_create
+    from app.services.vision_openrouter import ExtractionFailed, _chat_json
+
+    with pytest.raises(ExtractionFailed):  # fake_create levantou dentro do _chat_json
+        _chat_json(mock_client, get_settings(), [{"role": "user", "content": "x"}])
+    if not accepts_kwargs:
+        unknown = set(captured) - params
+        assert not unknown, f"kwargs rejeitados pelo SDK real: {unknown}"
+
+
+def test_embedded_prompt_matches_file_and_never_stub():
+    """Anti-drift Docker: prompt embutido == arquivo (imagem não leva ai/)."""
+    from pathlib import Path
+
+    from app.services.vision_openrouter import DEFAULT_SYSTEM_PROMPT, _load_system_prompt
+
+    assert len(DEFAULT_SYSTEM_PROMPT) > 500  # nunca um stub
+    assert '"due_at"' in DEFAULT_SYSTEM_PROMPT
+    repo_file = Path(__file__).resolve().parents[2] / "ai" / "prompts" / "nex_system.txt"
+    if repo_file.exists():
+        assert repo_file.read_text(encoding="utf-8").strip() == DEFAULT_SYSTEM_PROMPT.strip()
+    assert len(_load_system_prompt()) > 500
 
 
 def test_rate_limit_raises_retryable():
