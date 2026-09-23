@@ -102,7 +102,9 @@ export default function OnboardingPage() {
             <input id="ob-name" type="text" value={name} onChange={(e) => setName(e.target.value)} required style={{ width: "100%" }} />
             <label htmlFor="ob-grade">Série</label>
             <input id="ob-grade" type="text" value={grade} onChange={(e) => setGrade(e.target.value)} style={{ width: "100%" }} />
-            <button className="btn-primary" disabled={busy} style={{ width: "100%", marginTop: 16 }}>Continuar</button>
+            <button className="btn-primary" disabled={busy} style={{ width: "100%", marginTop: 16 }}>
+              {busy ? "Salvando…" : "Continuar"}
+            </button>
           </form>
         )}
 
