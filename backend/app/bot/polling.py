@@ -47,7 +47,7 @@ def run_polling(stop_event: threading.Event, token: str, max_iterations: int | N
             except Exception:
                 log.exception("polling: falha ao processar update")
         try:
-            flush_outbox_to_telegram()
+            flush_outbox_to_telegram(token)
         except Exception:
             log.exception("polling: falha no flush do outbox")
     return stats

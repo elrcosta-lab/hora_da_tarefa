@@ -9,18 +9,19 @@ from app.core.ratelimit import limit
 router = APIRouter(prefix="/v1/telegram", tags=["telegram"])
 
 
-def flush_outbox_to_telegram() -> int:
-    """Entrega o outbox via sendMessage (só com TELEGRAM_LIVE_SEND). Retorna enviadas."""
+def flush_outbox_to_telegram(token: str | None = None) -> int:
+    """Entrega o outbox via sendMessage (só com envio live). Retorna enviadas."""
     from app.bot import telegram_api as _tg
 
     settings = get_settings()
+    token = token or settings.TELEGRAM_BOT_TOKEN
     live = settings.TELEGRAM_LIVE_SEND or settings.TELEGRAM_POLLING
-    if not live or settings.TELEGRAM_BOT_TOKEN in ("change-me", "test-token", ""):
+    if not live or token in ("change-me", "test-token", ""):
         return 0
     sent = 0
     for chat_id, text in drain_outbox():
         try:
-            _tg.send_message(settings.TELEGRAM_BOT_TOKEN, chat_id, text)
+            _tg.send_message(token, chat_id, text)
             sent += 1
         except _tg.TelegramError:
             continue
