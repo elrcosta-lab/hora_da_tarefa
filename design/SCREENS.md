@@ -16,3 +16,5 @@
 | §7.8 Onboarding/Telegram | DESKTOP | `screens/616a8e19a784494fb5907afd4707eb72` | [screenshot](https://lh3.googleusercontent.com/aida/AEtjO1X5FPYl9FYRSVFVAVSZh14bPG4wD32b3DV_7bMo6NDP_I1CDoIS7KLUE0qAqYAf5eH2Ja-OKt49TDNKReyVOQ66EFATgSn1o-mWbV4Dr7IvzCryz2lr0h1ApCXwXH9kbuKLcG_YYRiv-pdYkLz0NkUW3Mnba8vK_TIW8sC3JEW8b0YZOewuz1gSFF8BiL3HaZS9sx501yah7LaPZ4Bw3tfRD0NqrL8xQV2noXkIHrK6kDlwjW2NiMB-ngk) |
 
 Todas as 8 telas do §7 geradas (Dashboard, Upload, Detalhe, Calendário, Grade/Atividades, Notificações, Histórico, Onboarding).
+
+> Nota (beta): o frontend implementado (`frontend/app/`) organiza-se em **dashboard, tarefas, crianças, calendário, configurações, onboarding, login** — as telas Stitch acima serviram de referência visual (tokens no design system), não de mapa 1:1 de rotas.

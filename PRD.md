@@ -1,8 +1,8 @@
 # PRD — Hora da Tarefa
 
-> **Status:** Rascunho
-> **Versão:** 1.1 (OpenRouter)
-> **Última atualização:** 2026-09-22
+> **Status:** Beta (VPS)
+> **Versão:** 1.2 (OpenRouter pago + polling)
+> **Última atualização:** 2026-09-23
 > **Responsável:** Product Owner (a definir)
 > **Classificação:** Documento de requisitos de produto (PRD)
 
@@ -26,7 +26,7 @@ Pais e responsáveis enfrentam diariamente:
 - **Custo de ferramentas de IA:** soluções que usam APIs de visão pagas (GPT-4o, Gemini Pro) cobram por imagem e por token, inviabilizando preço popular no Brasil. O MVP usa o modelo pago OpenRouter (`nex-agi/nex-n2.5-mini`, multimodal texto+imagem, 262k contexto, US$ 0,025/0,10 por 1M tokens), com custo de centavos por mil extrações e rate limit gerenciado por fila + retry.
 - **Sobrecarga cognitiva:** a "gestão da lição de casa" hoje é feita de memória e boa vontade, sem sistema de acompanhamento nem histórico.
 
-**Por que agora:** modelos multimodais gratuitos via OpenRouter (Nex-N2.5-Mini (MoE multimodal 35B/3B ativos, 262k contexto, Apache 2.0)) entregam OCR + extração semântica direto da imagem via API, sem precisar de GPU/VPS parruda. Isso elimina a complexidade de VLM quantizado local (SmolVLM2, Moondream2, Qwen2-VL-2B em CPU) e libera a VPS de 1 vCPU / 4GB para só API + banco + fila. Privacidade é tratada por anonimização pré-envio (redimensionar ≤1600px, remover EXIF, hash SHA-256, sem PII em logs).
+**Por que agora:** modelos multimodais via OpenRouter (Nex-N2.5-Mini — MoE multimodal 35B/3B ativos, 262k contexto) entregam OCR + extração semântica direto da imagem via API, sem precisar de GPU/VPS parruda — hoje no tier **pago** (estabilidade no beta), com `:free` como contingência. Isso elimina a complexidade de VLM quantizado local (SmolVLM2, Moondream2, Qwen2-VL-2B em CPU) e libera a VPS de 1 vCPU / 4GB para só API + banco + fila. Privacidade é tratada por anonimização pré-envio (redimensionar, remover EXIF, hash SHA-256, sem PII em logs; a LLM recebe derivada de 1024px, original íntegro no storage).
 
 ### 1.3 Solução Proposta
 
@@ -271,10 +271,11 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 
 **Descrição:** Bot que recebe fotos/textos, confirma agendamento e envia lembretes com botões de ação.
 
-**Comandos/mensagens:**
-- `/start`, `/ajuda`, `/hoje`, `/semana`, `/pendentes`
+**Comandos/mensagens (implementado):**
+- `/start`, `/ajuda`, `/hoje`, `/tarefas`, `/concluir <id>`, `/criancas`
 - Envio de foto → inicia RF-04/05.
-- Envio de texto → criação manual de tarefa.
+- Código de 6 dígitos (puro ou `/start <código>`) → vincula conta.
+- Linhas de lista: `• {criança} · {matéria} — {título} [status]` (nunca `?`).
 - Botões inline: `✅ Feito`, `⏳ Ainda não`, `❌ Cancelar`, `🔁 Reagendar`.
 
 **Regras:**
@@ -288,14 +289,13 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 
 **Descrição:** Criar, ler, atualizar e excluir (soft delete) tarefas, com máquina de estados definida.
 
-**Máquina de estados:**
+**Máquina de estados (implementada — `status` + `extraction_status` separados):**
 ```
-pending_extraction → needs_review → agendada → em_andamento
-        → concluida
-        → atrasada
-        → cancelada (não será realizada)
-        → arquivada (terminal, pós-conclusão/cancelamento)
+pendente → agendada → em_andamento → concluída
+   ↓           ↓            ↓
+atrasada → concluída | cancelada → arquivada
 ```
+Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK preenche campos (`ok`) ou pede revisão (`baixa_confianca`, PATCH promove a `ok`); `falhou` após 3 retries; `descartada` se não é tarefa. `mark_overdue` (beat) promove `pendente|agendada` com prazo passado → `atrasada`. Transição fora da matriz → `409`.
 **Transições permitidas:**
 - `agendada → em_andamento` (início) | `agendada → cancelada` | `agendada → atrasada` (prazo vencido sem conclusão)
 - `em_andamento → concluida` | `em_andamento → cancelada`
@@ -392,7 +392,7 @@ pending_extraction → needs_review → agendada → em_andamento
 | Cache/Fila | Redis 7 (ou fila em Postgres) | ~80–150 MB | Fila de extração (concorrência 3–5), rate limiting, cache por SHA-256, dedupe Telegram |
 | Pré-processamento imagem | Pillow (resize, strip EXIF, JPEG) | ~50–100 MB/job | Sem OCR/VLM local; máx. 1600px, JPEG q=82 |
 | VLM/LLM | **OpenRouter `nex-agi/nex-n2.5-mini`** | 0 MB na VPS (API externa) | Multimodal texto+imagem, 262k contexto, 32k saída, structured output, microcusto |
-| Bot | Worker Python (python-telegram-bot) | ~100 MB | Long polling ou webhook |
+| Bot | Handlers próprios em Python sobre `httpx` (sem aiogram) | ~100 MB | Mesmo processo da API; polling ou webhook + idempotência |
 | Reverse proxy | Caddy/Nginx | ~50 MB | TLS automático |
 
 **Total pico ≈1.1 GB** — folga confortável em 4 GB. Sem swap/OOM de IA. Sem download de modelos.
@@ -402,7 +402,7 @@ pending_extraction → needs_review → agendada → em_andamento
 - **Modelo:** `nex-agi/nex-n2.5-mini` — MoE multimodal 35B total / 3B ativos por token, Apache 2.0, visão + raciocínio + function calling, 262k contexto, structured output.
 - **Endpoint:** `POST https://openrouter.ai/api/v1/chat/completions` (OpenAI-compatible). SDK: `openai` Python com `base_url` + `api_key=$OPENROUTER_API_KEY`.
 - **Por que ele:** microcusto (créditos OpenRouter), dispensa GPU/CPU pesada, aceita imagem em base64/data-URL direto (sem OCR separado), responde JSON estrito com `is_homework`, `subject`, `title`, `statement`, `due_at`, `estimated_minutes`, `priority`, `confidence`, `needs_review`.
-- **Limites do free:** rate limited (429 possível em pico) → fila com backoff exponencial + cache por `sha256` (nunca reprocessa mesma foto) + fallback para entrada manual se 3 retries falharem. Provedor pago `nex-agi/nex-n2.5-mini` (pago, upgrade sem trocar código) é upgrade futuro sem trocar código (só troca `OPENROUTER_MODEL`).
+- **Limites do tier pago:** 429 possível em pico → fila com backoff exponencial 1/5/30 min (3 retries) + `AI_WORKER_CONCURRENCY=3` + cache por `sha256` (nunca reprocessa mesma foto) + fallback para entrada manual se os retries falharem. `:free` mantido só como contingência. Economia ativa: imagem da LLM em 1024px, `reasoning.effort=low`, `max_tokens` ajustado, `GET /v1/usage` com custo por conta.
 - **Modelos locais anteriores (SmolVLM2, Moondream2, Qwen2-VL-2B, Llama 3.2 1B) — REMOVIDOS do MVP.** Mantidos apenas como ideia de fallback offline pós-MVP, fora de escopo.
 
 ### 6.4 Fallback e evolução (pós-MVP — RF-15 redefinido)
@@ -513,26 +513,26 @@ sequenceDiagram
 ### 8.1 Telegram Bot API
 
 - **Uso:** entrada de fotos/textos, confirmação de agendamento, lembretes, coleta de status.
-- **Modo:** webhook em produção (rota HTTPS via Caddy) + long polling em dev.
+- **Modo:** **polling em produção** (`RUN_MODE=polling`, único modo operante sem URL pública) + webhook HTTPS via Caddy como opção pós-DNS.
 - **Segurança:** `secret_token` do webhook, validação de `update_id` para idempotência, `chat_id` pareado a usuário por código de 6 dígitos.
 - **Rate limit:** respeitar limites da API (≈30 msg/s global; fila com backoff).
 
 ### 8.2 Armazenamento de Imagens
 
-- **MVP:** disco local (`/data/images`) com nomes por hash; metadados em Postgres.
+- **MVP:** MinIO (S3-compatível, `STORAGE_BACKEND=s3` no compose) com `local` em dev/testes, sob abstração `StorageProvider`.
 - **Pós-MVP:** migração opcional para storage S3-compatível (MinIO, Backblaze B2, Cloudflare R2) mantendo back-end abstrato (`StorageProvider`).
 - **Política:** retenção 90 dias (RNF-09), compressão e limpeza automática por cron.
 
 ### 8.3 Banco de Dados
 
 - **Produção:** PostgreSQL 16 (Docker). **Dev/testes:** SQLite permitido.
-- **Modelo de dados (entidades núcleo):** `users`, `accounts`, `account_members` (papéis), `children`, `school_classes`, `activities`, `tasks`, `task_events`, `notifications`, `extractions`, `images`.
-- **Isolamento:** toda query escopada por `account_id` e, quando aplicável, `child_id`.
+- **Modelo de dados (implementado):** `app_user` (+ `refresh_token`, vínculo Telegram, papel admin), `child`, `school_schedule`, `activity`, `parent_availability`, `homework`, `homework_image`, `suggestion_slot`, `notification_setting`, `notification_log` (migrations Alembic `0001–0011`).
+- **Isolamento:** toda query escopada por dono (`child.owner_user_id` / `homework.created_by_user_id`) e, quando aplicável, `child_id`; conta cruzada recebe 403.
 
 ### 8.4 Fila / Agendador
 
-- **Fila de extração:** Redis + worker (RQ/Celery) ou tabela `jobs` com `SELECT ... FOR UPDATE SKIP LOCKED`.
-- **Agendador de lembretes:** APScheduler (ou cron + tabela `notifications`) com deduplicação por chave.
+- **Fila de extração:** sem broker externo — upload responde 202 e a extração roda em background task com backoff 1/5/30 min (3 retries); `AI_WORKER_CONCURRENCY=3`.
+- **Agendador de lembretes:** beat APScheduler dentro da API (tick 1/min: `mark_overdue` + `dispatch_due` 24h/2h/atraso; purge de imagens 1×/dia), deduplicação por `idempotency_key`.
 
 ### 8.5 (Opcional pós-MVP) APIs externas de visão
 
@@ -560,10 +560,10 @@ sequenceDiagram
 
 | Risco | Prob. | Impacto | Mitigação |
 |---|---|---|---|
-| OCR/leitura ruim em caligrafia de criança | Alta | Alto | Prompt multimodal direto na imagem (Nex-N2.5-Mini) sem OCR intermediário; revisão humana obrigatória em baixa confiança; anonimização preserva legibilidade (JPEG q=82, 1600px) |
-| Rate limit 429 do OpenRouter | Média | Médio | Fila com backoff 1/5/30 min (3 retries), cache por SHA-256 (nunca reprocessa), fallback `:free` em contingência |
-| Timeout/latência da API externa | Média | Médio | Timeout 60s + retry 1×; modo manual sempre disponível; concorrência 3–5 sem OOM |
-| Escalada de custo se migrar para pago | Baixa | Médio | Modelo free como padrão; limites mensais por conta e alerta de custo; log de tokens por extração |
+| OCR/leitura ruim em caligrafia de criança | Alta | Alto | Prompt multimodal direto na imagem (Nex-N2.5-Mini) sem OCR intermediário; revisão humana obrigatória em baixa confiança; derivada da LLM em 1024px JPEG q=82 (original íntegro) |
+| Rate limit 429 do OpenRouter (tier pago) | Média | Médio | Backoff 1/5/30 min (3 retries), cache por SHA-256 (nunca reprocessa), `AI_WORKER_CONCURRENCY=3`, contingência `:free`, `GET /usage` com custo por conta |
+| Timeout/latência da API externa | Média | Médio | Timeout 60s + retry 1×; modo manual sempre disponível; concorrência 3 sem OOM |
+| Escalada de custo do tier pago | Baixa | Médio | Economia ativa (1024px, `reasoning.effort=low`, omit-null, dedupe); limites mensais por conta e alerta de custo; log de tokens por extração |
 | Dados sensíveis de menores (LGPD) | Média | Alto | Anonimização pré-envio (resize, strip EXIF, hash), HTTPS, sem PII em logs, retenção 90 dias, direito de exclusão |
 | Dependência da API do Telegram + OpenRouter | Baixa | Alto | Abstrair canal de notificação e `VisionProvider`; entrada manual nunca bloqueada; `AI_ENABLED=false` opera degradado |
 | Extração "inventar" campos (alucinação) | Média | Alto | Schema estrito com `null` permitido + `response_format=json_object` + `temperature=0.1`; proibir inferência de datas não visíveis; revisão humana |
@@ -578,7 +578,7 @@ sequenceDiagram
 | **Família** | R$ 19,90/mês | Até 4 crianças, tarefas ilimitadas, todos os lembretes, multi-responsável, histórico, exportação |
 | **Família+** | R$ 34,90/mês | Tudo do Família + fallback de precisão (API externa) com teto mensal, relatórios, suporte prioritário |
 
-**Estratégia:** teste grátis de 14 dias no plano Família; cobrança via gateway brasileiro (Pix/cartão/boleto); ancorar valor no tempo economizado e na redução de atrasos. Custo marginal baixo (IA local) sustenta margem alta.
+**Estratégia:** teste grátis de 14 dias no plano Família; cobrança via gateway brasileiro (Pix/cartão/boleto); ancorar valor no tempo economizado e na redução de atrasos. Custo marginal baixo (IA via API, centavos por mil extrações) sustenta margem alta.
 
 ---
 
@@ -637,6 +637,7 @@ sequenceDiagram
 |--------|------|-------|-----------|
 | 1.0 | 2026-09-22 | Subagente PRD | Versão inicial completa (MVP + pós-MVP, IA local, motor de slots, Telegram) |
 | 1.1 | 2026-09-22 | OpenCode | Migração IA local → OpenRouter `nex-agi/nex-n2.5-mini` (substituição total, anonimização pré-envio, sem Ollama/Tesseract no caminho crítico) |
+| 1.2 | 2026-09-23 | OpenCode | Beta na VPS: modelo **pago** (`OPENROUTER_MODEL`), bot em **polling** (`RUN_MODE`), FSM real (`pendente…arquivada` + `extraction_status`), MinIO no compose, beat APScheduler, linhas do bot com nome da criança |
 
 ---
 

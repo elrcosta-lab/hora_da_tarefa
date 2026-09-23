@@ -10,7 +10,7 @@
 
 - [ ] VPS com Docker Engine + plugin compose (este repo já subiu com `docker-ce`)
 - [ ] Domínio apontando para a VPS (ex.: `app.horadatarefa.com` + `api.horadatarefa.com`)
-- [ ] Conta OpenRouter com crédito/limite free + `OPENROUTER_API_KEY` (`sk-or-v1-...`)
+- [ ] Conta OpenRouter **com crédito** (modelo pago `nex-agi/nex-n2.5-mini`) + `OPENROUTER_API_KEY` (`sk-or-v1-...`)
 - [ ] Bot `@hora_da_tarefa_bot` (BotFather) — token e comandos **já configurados** (ver §1)
 
 ## 1. Telegram — status atual
@@ -21,7 +21,8 @@
 | Comandos (`/start /ajuda /hoje /tarefas /concluir /criancas`) | ✅ via `setMyCommands` |
 | Descrição curta + sobre | ✅ via API |
 | **Avatar** (`assets/brand/telegram-avatar-512.png`) | ⬜ manual: BotFather → `/setuserpic` → enviar o PNG |
-| **Webhook** (`setWebhook`) | ⬜ após DNS: ver §3 |
+| **Modo atual: polling** (`RUN_MODE=polling`) | ✅ ativo — funciona sem URL pública (só egress) |
+| **Webhook** (`setWebhook`) | ⬜ opcional, após DNS: ver §3 |
 
 Comandos para reinspecionar (sem gravar segredo em histórico — prefira variável de ambiente):
 
@@ -41,10 +42,9 @@ cp .env.example .env
 # ajustar: WEB_API_URL=https://api.<dominio>, CORS_ORIGINS=https://app.<dominio>
 ```
 
-## 3. Webhook do Telegram (após DNS + TLS)
+## 3. Webhook do Telegram (opcional — após DNS + TLS)
 
-O Caddy emite TLS automático quando o domínio resolve para a VPS. Ajuste o
-`Caddyfile` para os domínios reais e suba (`docker compose up -d --build`).
+O beta opera em **polling** e não precisa desta seção. Quando houver domínio, o Caddy emite TLS automático: ajuste o `Caddyfile` para os domínios reais e suba (`docker compose up -d --build`).
 Depois registre o webhook **com o mesmo secret do `.env`**:
 
 ```bash
@@ -59,13 +59,26 @@ curl -s "https://api.telegram.org/bot$TB/getWebhookInfo"  # confere url + pendin
 
 Teste: gere um código em Configurações → envie `/start <código>` no bot → deve responder "vinculada".
 
-## 4. Subida e verificação
+## 4. Deploy e verificação
+
+> A VPS **não tem clone git** — o sync é via `rsync` (só arquivos, nunca o `.env`).
 
 ```bash
+export SSH_KEY="$HOME/.ssh/<chave-vps>" VPS="root@<ip-vps>"
+# sync (exemplo: um arquivo do backend)
+rsync -avz -e "ssh -i $SSH_KEY" backend/app/bot/handlers.py $VPS:/opt/hora_da_tarefa/backend/app/bot/handlers.py
+# rebuild + restart + verificação
+ssh -i $SSH_KEY $VPS "cd /opt/hora_da_tarefa && docker compose build -q api \
+  && docker compose up -d api && sleep 12 \
+  && docker compose exec -T api python -c \"import urllib.request; print(urllib.request.urlopen('http://localhost:8000/readyz').read().decode())\""
+# esperado: {"ok":true,"checks":{"api":"up"}}
+```
+
+```bash
+# primeira subida (na VPS)
 docker compose up -d --build
 docker compose ps                    # todos healthy
-docker compose logs api | grep -i alembic   # 0001→0005 aplicadas
-curl https://api.<dominio>/healthz   # {"ok":true}
+docker compose logs api | grep -i alembic   # 0001→0011 aplicadas
 ```
 
 Roteiro funcional (navegador + Telegram): registro com consentimento →
@@ -76,11 +89,9 @@ revisão → agendar → `/hoje` → concluir → CSV em Tarefas.
 
 - **Logs:** `docker compose logs -f api` (sem PII/imagem/base64 por construção)
 - **Beat:** tick 1/min + purge 1x/dia dentro da API (`BEAT_ENABLED=false` desliga)
-- **Fila OpenRouter 429:** backoff automático; `AI_WORKER_CONCURRENCY` no `.env`
-- **Rollback:** `git log --oneline` → `git revert <sha>` ou checkout da tag anterior +
-  `docker compose up -d --build api web`; migrations reversíveis
-  (`alembic -c backend/alembic.ini downgrade -1`)
-- **Backup:** volume `pgdata` (`docker run --rm -v hora-da-tarefa_pgdata:/data -v $(pwd):/b ...`)
+- **Fila OpenRouter 429:** backoff automático 1/5/30 min (3 retries); `AI_WORKER_CONCURRENCY=3` no `.env`; custo por conta em `GET /v1/usage`
+- **Rollback:** sem git na VPS — reenvie via `rsync` a versão anterior do arquivo + `docker compose build -q api && docker compose up -d api`; migrations reversíveis (`docker compose exec api alembic -c /app/alembic.ini downgrade -1`)
+- **Backup:** volume `pgdata` (descubra o nome real com `docker volume ls | grep pgdata`): `docker run --rm -v <projeto>_pgdata:/data -v /opt/hora_da_tarefa/backup:/b ...`
 
 ## 6. Pendências conhecidas (não bloqueiam o beta)
 

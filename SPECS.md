@@ -1,8 +1,8 @@
 # SPECS — Hora da Tarefa (SDD)
 
 > Documento de Especificação Técnica (Spec-Driven Development).
-> Autor: subagente SPEC + OpenCode · Versão: 1.1 (OpenRouter) · Status: **Rascunho para revisão**
-> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini`).
+> Autor: subagente SPEC + OpenCode · Versão: 1.2 (beta VPS) · Status: **Aprovada para o beta**
+> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini` pago) + bot em polling.
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
 
 ---
@@ -46,11 +46,11 @@
 | Frontend | **Next.js 14 (App Router) + React + TypeScript + Tailwind CSS + shadcn/ui** | Vite + React | Export estático serve à VPS; Tailwind/shadcn casam com telas geradas no Stitch (tokens viram CSS vars). |
 | Backend | **Python 3.11 + FastAPI + Pydantic v2 + SQLAlchemy 2 + Alembic** | Node/NestJS | FastAPI integra direto com stack de IA em Python (OCR/VLM) e valida contratos com Pydantic. |
 | Banco | **PostgreSQL 16** | — | JSONB para payloads IA, `tsrange`/`tstzrange` para slots, forte em constraints. |
-| Fila/Jobs | **Celery + Redis (broker + result backend)** | BullMQ (se backend Node) · cron simples como fase 0 | Celery permite workers GPU/CPU dedicados, retries e prioridade; Redis 7 leve. |
+| Fila/Jobs | **Background tasks FastAPI + beat APScheduler + Redis** | Celery/RQ | Sem broker externo no MVP; extração em background com backoff, beat 1/min na API, Redis p/ rate limit + dedupe |
 | Storage | **MinIO (S3-compatible) em volume Docker** | diretório em volume + abstração S3 | Mesma API S3 permite migrar para provedor externo sem trocar código. |
-| Bot Telegram | **aiogram 3 (Python)** | grammY/Telegraf (Node) | aiogram no mesmo runtime do backend; webhook + FSM + idempotência. |
+| Bot Telegram | **Handlers próprios em Python sobre `httpx` (sem aiogram)** | grammY/Telegraf (Node) | Mesmo processo da API; polling (`RUN_MODE`) ou webhook + idempotência por `update_id` |
 | OCR | **Nenhum no caminho crítico** (Nex-N2.5-Mini lê imagem direto) | Tesseract 5 como enriquecimento futuro opcional | Removido para simplificar; reavaliar pós-MVP se manuscrito exigir |
-| VLM (extração) | **OpenRouter `nex-agi/nex-n2.5-mini` via `openai` SDK (`base_url=https://openrouter.ai/api/v1`)** | `nex-agi/nex-n2.5-mini` (pago) para SLA maior | MoE multimodal 35B/3B ativos, 262k contexto, structured output, microcusto (US$ 0,025/0,10 por 1M tokens) |
+| VLM (extração) | **OpenRouter `nex-agi/nex-n2.5-mini` pago via `openai` SDK (`base_url=https://openrouter.ai/api/v1`)** | `:free` da mesma família como contingência | MoE multimodal 35B/3B ativos, 262k contexto, structured output, microcusto (US$ 0,025/0,10 por 1M tokens); `:free` satura em pico |
 | LLM fallback texto | **O mesmo Nex-N2.5-Mini (só-texto, sem imagem)** | — | Sem Llama/Qwen local; retry usa o mesmo modelo com `temperature=0.1` |
 | Runtime IA | **HTTP client + Pillow (resize/strip EXIF)** | — | Sem Ollama/llama.cpp; worker leve |
 | Reverse proxy/TLS | **Caddy** (TLS automático) | Nginx + certbot | Menos config na VPS. |
@@ -72,7 +72,7 @@
 | minio | 256 MB | 0.2 | |
 | **Total simultâneo (pico)** | **≈1.9 GB** | ~1.6 vCPU | folga confortável em 4 GB; sem swap/OOM de IA. |
 
-**Mitigações de rate limit (tier pago):** backoff exponencial 1/5/30 min (3 retries), cache/dedupe por `sha256` (nunca reprocessa mesma foto), `AI_WORKER_CONCURRENCY` configurável, upgrade para `nex-agi/nex-n2.5-mini` pago só trocando `OPENROUTER_MODEL`.
+**Mitigações de rate limit (tier pago em produção):** backoff exponencial 1/5/30 min (3 retries), cache/dedupe por `sha256` (nunca reprocessa mesma foto), `AI_WORKER_CONCURRENCY=3`, economia ativa de tokens (§5.6), `GET /v1/usage` com custo por conta.
 
 ### 0.4 Estrutura de repositório sugerida
 
@@ -89,12 +89,12 @@ hora_da_tarefa/
 │  │  ├─ models/        # SQLAlchemy
 │  │  ├─ schemas/       # Pydantic (inclui ExtractionResult)
 │  │  ├─ services/      # scheduling.py, vision_openrouter.py, notify.py
-│  │  ├─ tasks/         # celery tasks (extract_homework via OpenRouter)
-│  │  └─ bot/           # aiogram handlers
-│  ├─ alembic/
-│  └─ tests/            # test_vision_openrouter.py (mock + live opcional)
-├─ ai/                  # prompts/nex_system.txt (sem Docker de VLM, sem .gguf)
-└─ specs/               # specs individuais
+│  │  ├─ tasks/         # extract, routine, notify, users, admin, beat (persistência SQLAlchemy, sem broker)
+│  │  └─ bot/           # handlers + polling + telegram_api (httpx, sem aiogram)
+│  ├─ alembic/          # versions 0001–0011
+│  └─ tests/            # 28 arquivos, 132 testes (pytest, mocks; IA live manual)
+├─ ai/prompts           # system prompt da extração (nex_system)
+└─ docs/GO-LIVE.md      # runbook de deploy (rsync + compose, sem git na VPS)
 ```
 
 ---
@@ -105,12 +105,12 @@ hora_da_tarefa/
 
 ```mermaid
 flowchart LR
-  Pai([Pai no Telegram]) --> BOT[aiogram Bot]
+  Pai([Pai no Telegram]) --> BOT[Bot handlers (httpx)]
   BOT --> API[FastAPI]
   WEB[Next.js Web] --> API
   API --> PG[(Postgres)]
   API --> S3[(MinIO/S3)]
-  API --> Q[(Redis / Celery)]
+  API --> Q[(Redis: rate limit + dedupe)]
   Q --> WA[worker-default: agenda + notifica]
   Q --> WAI[worker-ai leve: anonimiza + OpenRouter]
   WAI --> OR[OpenRouter nex-n2.5-mini]
@@ -124,22 +124,20 @@ flowchart LR
 
 | Componente | Responsabilidade | Não faz |
 |---|---|---|
-| `api` | Autenticação, CRUD, upload, upload→fila, expõe `/suggestions`, webhook Telegram | Não chama IA inline (só enfileira) |
-| `worker-ai` | Anonimiza imagem (resize/strip EXIF/hash), chama OpenRouter Nex-N2.5-Mini, valida JSON, grava `homework` + `homework_image` | Não roda modelo local; não envia notificação |
-| `worker-default` | Recalcula sugestões, dispara notificações 24h/2h, transições de status por tempo (atrasada) | Não processa imagem |
+| `api` | Autenticação, CRUD, upload, extração em background, expõe `/suggestions`, webhook Telegram | Não chama IA inline no request (responde 202 e processa em background) |
+| `extract` (background) | Anonimiza imagem (resize/strip EXIF/hash), chama OpenRouter Nex-N2.5-Mini pago, valida JSON, grava `homework` + `homework_image` | Não roda modelo local; não envia notificação |
 | `scheduler` (beat) | `APScheduler` no lifespan da API: tick 1/min (`run_beat_tick` = `mark_overdue` + `dispatch_due` com sender Telegram quando `TELEGRAM_LIVE_SEND`) + purge de imagens 1x/dia; `BEAT_ENABLED=false` desliga | - |
-| `bot` (aiogram) | Recebe update do Telegram, valida usuário, chama API interna | Não acessa DB diretamente (usa API) |
+| `bot` (httpx, sem aiogram) | Recebe update via webhook ou polling (`RUN_MODE`, `app/bot/polling.py`), valida vínculo do usuário, opera via camada `tasks` | Não expõe dados sem vínculo (§6.1 gate) |
 | `minio` | Guarda imagens originais e derivadas | - |
-| `openrouter` (externo) | Inferência multimodal imagem→JSON (`nex-agi/nex-n2.5-mini`) | Não guarda estado; rate limited no free |
+| `openrouter` (externo) | Inferência multimodal imagem→JSON (`nex-agi/nex-n2.5-mini` pago) | Não guarda estado; 429 tratado com backoff |
 
 ### 1.3 Fluxo principal (happy path)
 
-1. Pai envia foto no Telegram → bot baixa arquivo e chama `POST /homeworks/upload` (multipart) com `child_id` opcional.
-2. API anonimiza (resize ≤1600px, strip EXIF, SHA-256), grava `homework` (status `pendente`), salva imagem em `homework_image`, publica job `extract_homework` na fila `ai` (dedupe por `sha256`: hash repetido reaproveita `extraction_json` sem chamar API).
-3. `worker-ai` chama OpenRouter `nex-agi/nex-n2.5-mini` (imagem base64 + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança) → publica `compute_suggestions`.
-4. `worker-default` roda motor de agendamento → grava `suggestion_slot` → publica `notify` (sugestão inicial).
-5. Bot envia mensagem com sugestão e botões (`Agendar` / `Outra` / `Não é tarefa`).
-6. Beat agenda lembretes 24h/2h em `notification_log` (status `scheduled`) e dispara quando vence.
+1. Pai envia foto no Telegram → bot baixa arquivo via `getFile` e registra `homework` (status `pendente`) com `child_id` (contexto ou única criança).
+2. API anonimiza (resize ≤1600px, strip EXIF, SHA-256), salva imagem em `homework_image`, responde 202 e roda a extração em background (dedupe por `sha256`: hash repetido reaproveita `extraction_json` sem chamar API).
+3. Extração chama OpenRouter `nex-agi/nex-n2.5-mini` pago (derivada 1024px + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança, `extraction_status`) → motor de agendamento grava `suggestion_slot`.
+4. Bot envia mensagem com sugestão e botões (`Agendar` / `Outra` / `Não é tarefa`).
+5. Beat agenda lembretes 24h/2h em `notification_log` (status `scheduled`) e dispara quando vence.
 
 ---
 
@@ -152,7 +150,7 @@ flowchart LR
 - Fuso: armazenar `timestamptz` (UTC); timezone do usuário em `user.timezone` (default `America/Sao_Paulo`).
 - Enums nativos do Postgres.
 - Dados de menor: ver §10 (LGPD) — nenhum dado sensível do menor além do necessário.
-- **Persistência ativa (F0, 2026-09-22):** stores in-memory removidos; `app/tasks/*` operam via SQLAlchemy (`app/core/db.py`, sessão curta por operação, retorno em dicts) sobre **Postgres 16** (prod/compose) ou **sqlite** (dev/testes via `DATABASE_URL`). Alembic `0001` (tabelas §2) + `0002` (`notification_settings`: toggles 24h/2h + quiet por criança). Imagens via `StorageProvider` (`app/core/storage.py`: `local` em dev/testes, `s3`/MinIO no compose com `STORAGE_BACKEND=s3`); `homework_image` persiste metadados + `expires_at` (retenção RNF-09/11 via `purge_expired_images`).
+- **Persistência ativa (F0, 2026-09-22):** stores in-memory removidos; `app/tasks/*` operam via SQLAlchemy (`app/core/db.py`, sessão curta por operação, retorno em dicts) sobre **Postgres 16** (prod/compose) ou **sqlite** (dev/testes via `DATABASE_URL`). Alembic `0001–0011`: núcleo (`0001`), notificações (`0002`), `app_user` + vínculo Telegram (`0003`), escopo por dono (`0004`), consentimento LGPD (`0005`), refresh tokens (`0006–0007`), disponibilidade do responsável (`0008–0009`), expiração do código de vínculo (`0010`), papel admin (`0011`). Imagens via `StorageProvider` (`app/core/storage.py`: `local` em dev/testes, `s3`/MinIO no compose com `STORAGE_BACKEND=s3`); `homework_image` persiste metadados + `expires_at` (retenção RNF-09/11 via `purge_expired_images`).
 
 ### 2.2 Enums
 
@@ -568,7 +566,7 @@ e/ou foto (bilhete, grade impressa, mensagem), via `nex-agi/nex-n2.5-mini`.
 ```
 
 **Erros:** 400 sem entrada/válido (`VALIDATION_ERROR`), 422 abstenção do modelo
-(`EXTRACTION_FAILED`, `retryable: true` — free-tier varia; UI oferece "tentar de novo"),
+(`EXTRACTION_FAILED`, `retryable: true` — provedor varia; UI oferece "tentar de novo"),
 409 em sobreposição (`SCHEDULE_OVERLAP`), 403 cross-account.
 
 Tabela `parent_availability` (migrações `0008`+`0009`): janelas do responsável por criança
@@ -602,9 +600,9 @@ Retorna slots sugeridos (por criança ou tarefa).
 **Request** `{ "start_at": "2026-09-23T16:00:00-03:00" }` (opcional; default = slot sugerido)
 **Response 200** `{ "homework_id": "3f1c...", "status": "agendada", "scheduled_start": "..." }`
 
-### 3.10 `POST /telegram/webhook`
+### 3.10 `POST /v1/telegram/webhook`
 
-Recebe updates do Telegram (aiogram em modo webhook). Autenticidade via header secreto `X-Telegram-Bot-Api-Secret-Token` validado contra `TELEGRAM_WEBHOOK_SECRET`.
+Recebe updates do Telegram (handlers próprios sobre `httpx`, sem aiogram — webhook ou polling via `app/bot/polling.py` conforme `RUN_MODE`). Autenticidade no modo webhook via header secreto `X-Telegram-Bot-Api-Secret-Token` validado contra `TELEGRAM_WEBHOOK_SECRET`.
 
 **Request** — Update do Telegram (resumido)
 ```json
@@ -810,7 +808,7 @@ flowchart LR
 - Payload: `model="nex-agi/nex-n2.5-mini"`, `messages=[{role:"user", content:[{type:"text", text:SYSTEM+hint},{type:"image_url", image_url:{url:"data:image/jpeg;base64,..."}}]}]`, `response_format={"type":"json_object"}`, `temperature=0.1`, `max_tokens=2048`.
 - Headers: `Authorization: Bearer …`, `HTTP-Referer: $OPENROUTER_SITE_URL`, `X-Title: $OPENROUTER_APP_NAME`.
 - Decodificação forçada de JSON (parse + retry único em modo só-texto com o mesmo modelo se 1ª resposta vier com markdown).
-- **Timeout:** 60 s + retry 1× imediato; 429/5xx → backoff Celery 1/5/30 min (máx. 3 tentativas).
+- **Timeout:** 60 s + retry 1× imediato; 429/5xx → backoff 1/5/30 min (máx. 3 tentativas).
 
 **E3. Validação** (Pydantic `ExtractionResult`)
 - `subject` deve estar em taxonomia conhecida; senão `"Outro"`.
@@ -907,7 +905,7 @@ resp = client.chat.completions.create(
 | `0.6 ≤ confidence < 0.75` | `extraction_status='baixa_confianca'`; notifica pedindo confirmação |
 | `confidence < 0.6` ou campos críticos nulos | `revisao_humana`; bot envia formulário rápido / UI destaca |
 | `is_homework=false` e conf ≥0.8 | descarta com aviso "Não identifiquei uma tarefa" |
-| 429 rate limit (tier pago) ou 5xx/timeout 60s | backoff Celery 1/5/30 min, máx. 3 retries; depois → `falhou` + entrada manual |
+| 429 rate limit (tier pago) ou 5xx/timeout 60s | backoff 1/5/30 min, máx. 3 retries; depois → `falhou` + entrada manual |
 | Tarefa repetida (sha256 igual) | reaproveita extração anterior, **não chama API** |
 | `AI_ENABLED=false` | pula IA, cria tarefa para preenchimento manual |
 
@@ -958,11 +956,11 @@ rechama a API. `GET /v1/usage` soma tokens e estima US$ por conta
 
 ### 6.1 Modo de operação
 
-- **Produção:** webhook (`POST /v1/telegram/webhook`) atrás do Caddy com TLS; `secret_token` do Telegram validado.
-- **Desenvolvimento/local:** polling via `aiogram` (`RUN_MODE=polling`), útil na VPS sem domínio.
-- **Idempotência:** dedupe por `update_id` (Redis SET NX, TTL 24 h); reenvio do Telegram não duplica ação.
+- **Produção (beta, sem URL pública):** polling (`RUN_MODE=polling`, `app/bot/polling.py`, só egress; `secret_token` não se aplica) com `TELEGRAM_LIVE_SEND=true`.
+- **Produção (pós-DNS + TLS):** webhook (`POST /v1/telegram/webhook`) atrás do Caddy; `secret_token` do Telegram validado. Ver `docs/GO-LIVE.md` §3.
+- **Idempotência:** dedupe por `update_id` (memória/Redis SET NX, TTL 24 h); reenvio do Telegram não duplica ação.
 - **Gate de acesso (obrigatório):** somente `telegram_user_id` vinculados acessam o bot. Pareamento via `POST /v1/auth/telegram/link` (gera código de 6 dígitos single-use) consumido no chat como código puro ou `/start <código>`. Sem vínculo: qualquer comando/foto/callback recebe mensagem de acesso restrito e **nada é criado nem listado** (sem vazamento de dados entre responsáveis). Tabela `app_user` (migração `0003`).
-- **Bot API real (sem aiogram):** `app/bot/telegram_api.py` (httpx) — fotos baixadas via `getFile` (falha → msg de erro, nada criado; jamás sintetiza bytes); respostas descarregadas do outbox via `sendMessage` em background quando `TELEGRAM_LIVE_SEND=true` (compose). `dispatch_due(sender=)` entrega lembretes 24h/2h/atraso ao `created_by_user_id` vinculado (templates §6.3), uma única vez por `idempotency_key`.
+- **Bot API real (sem aiogram):** `app/bot/telegram_api.py` (httpx) — fotos baixadas via `getFile` (falha → msg de erro, nada criado; jamais sintetiza bytes); `test_bytes_b64` só com `ALLOW_TEST_BYTES=true`. Respostas saem do outbox via `sendMessage` em background quando `TELEGRAM_LIVE_SEND=true`. `dispatch_due(sender=)` entrega lembretes 24h/2h/atraso ao `created_by_user_id` vinculado (templates §6.3), uma única vez por `idempotency_key`.
 
 ### 6.2 Comandos e handlers
 
@@ -1260,18 +1258,18 @@ Funcionalidade: Upload de foto da tarefa
 |---|---|---|---|
 | Unitário | pytest | `scheduling.score`, `suggest_slots`, FSM, parser de datas, validação Pydantic, anonimização (resize/strip EXIF/hash) | sem IA, rápido |
 | Contrato | pytest + httpx | endpoints, códigos de erro, schemas | mock OpenRouter (`respx`/`responses`) |
-| Integração IA | pytest `-m ai` | OpenRouter Nex-N2.5-Mini com 5–10 imagens fixture (requer `OPENROUTER_API_KEY`) | **rodar manual/noturno**, respeitar rate limit free; medir precision/recall de matéria e data |
+| Integração IA | pytest `-m ai` | OpenRouter Nex-N2.5-Mini pago com 5–10 imagens fixture (requer `OPENROUTER_API_KEY`) | **rodar manual/noturno**, respeitar 429; medir precision/recall de matéria e data |
 | E2E | Playwright (headless) | upload→sugestão→aceitar→notificação (Telegram mock + OpenRouter mock) | agendado |
 | Carga | Locust/K6 | 50 usuários, p95 < 800ms em `/homeworks` | janela de manutenção |
 
-**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data. Teste live usa `OPENROUTER_MODEL=nex-agi/nex-n2.5-mini` com `VCR`/cache para não estourar rate limit.
+**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data. Teste live usa `OPENROUTER_MODEL=nex-agi/nex-n2.5-mini` pago com cache para não queimar crédito.
 
-**Regras de CI:** unit+contrato em todo PR (com mock); integração IA live manual/noturna. Sem build de imagem `worker-ai` pesada (worker é leve, sem modelo).
+- **Regras de CI:** unit+contrato em todo PR (com mock); integração IA live manual/noturna. Sem worker de IA pesado (extração é HTTP + Pillow, sem modelo residente).
 
 ### 9.3 Observabilidade e logs
 
 - **Logs:** `structlog` JSON com `request_id`, `user_id`, `homework_id`, `job_id`, `duration_ms`, `openrouter_latency_ms`, `prompt_tokens`, `completion_tokens`. Nunca logar imagem base64, `statement`/OCR completos ou `OPENROUTER_API_KEY`; usar hash/ID.
-- **Métricas Prometheus:** `http_request_duration_seconds`, `celery_queue_depth{queue}`, `openrouter_requests_total{status}`, `openrouter_rate_limited_total`, `ai_extraction_confidence` (histograma), `ai_failures_total{stage}`, `notifications_sent_total{kind}`, `db_pool_usage`.
+- **Métricas (alvo, prover antes do GA):** `http_request_duration_seconds`, `beat_queue_depth`, `openrouter_requests_total{status}`, `openrouter_rate_limited_total`, `ai_extraction_confidence` (histograma), `ai_failures_total{stage}`, `notifications_sent_total{kind}`, `db_pool_usage`. Hoje: logs sem PII + `/healthz` (liveness) + `/readyz` (PG+Redis+S3).
 - **Alertas:** fila `ai` > 50 por 10 min; `openrouter_rate_limited_total` > 10/h; taxa de `revisao_humana` > 40%; erro 5xx > 2%; latência OpenRouter p95 > 45s.
 - **Healthchecks:** `/healthz` (liveness), `/readyz` (checa PG+Redis+S3).
 - **Retenção de logs:** 30 dias.
@@ -1283,7 +1281,7 @@ Funcionalidade: Upload de foto da tarefa
 ### 10.1 Dados de menor (OpenRouter)
 
 - Coletar o **mínimo**: nome/apelido, data de nascimento opcional, série. Sem CPF, endereço, foto do menor.
-- Imagens de tarefas podem conter nome/dados do menor → **anonimização obrigatória pré-envio**: resize ≤1600px, **strip total de EXIF**, conversão JPEG, envio só da derivada via HTTPS para `https://openrouter.ai/api/v1`. Nunca enviar original com EXIF/GPS.
+- Imagens de tarefas podem conter nome/dados do menor → **anonimização obrigatória pré-envio**: resize, **strip total de EXIF**, conversão JPEG, envio só da derivada (1024px, `AI_LLM_MAX_SIDE`) via HTTPS para `https://openrouter.ai/api/v1`. Nunca enviar original com EXIF/GPS.
 - Tratar como **dado pessoal de criança** (art. 14 LGPD) sob consentimento do responsável; informar em termo que a extração usa API externa (OpenRouter + Nex AGI) com trânsito internacional.
 - `child` nunca tem credencial/login próprio.
 
@@ -1312,7 +1310,7 @@ Funcionalidade: Upload de foto da tarefa
 - JWT curto (15 min) + refresh (7 dias, rotacionável). `POST /v1/auth/register` (409 `EMAIL_TAKEN`), `/login` (401), `/refresh` (401). Senhas em Argon2id (RNF-06).
 - **Escopo por dono (ativo):** `child.owner_user_id` + `homework.created_by_user_id`; todas as rotas exigem Bearer (401 sem) e conta cruzada recebe 403 `FORBIDDEN` (CA-05). Migração `0004`.
 - Checagem de posse **no servidor** em toda rota de recurso (`guardian` ↔ `child`); previne IDOR.
-- Bot→API via `X-Bot-Token` (rotável) e validação de `telegram_user_id`.
+- Bot opera no mesmo processo da API e valida vínculo por `telegram_user_id` (+ `secret_token` no modo webhook).
 - Webhook Telegram valida `X-Telegram-Bot-Api-Secret-Token`.
 
 ### 10.6 Upload e input
@@ -1328,7 +1326,8 @@ Funcionalidade: Upload de foto da tarefa
 | Rota | Limite |
 |---|---|
 | `POST /homeworks/upload` | 20/h por usuário; 5/min burst |
-| `POST /telegram/webhook` | 120/min por IP (com fila) |
+| `POST /homeworks/:id/reprocess` | 20/h por usuário; 5/min burst (cada chamada = inferência paga) |
+| `POST /v1/telegram/webhook` | 120/min por IP |
 | Login | 10 tentativas/15 min por IP+conta |
 | Global API | 300 req/min por usuário |
 
@@ -1338,7 +1337,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 
 - `.env` fora do git; segredos via Docker secrets.
 - Postgres e Redis sem porta exposta (rede interna Docker).
-- Backups diários do Postgres (retenção 7 dias) cifrados.
+- Backups do Postgres (previsto: diário, retenção 7 dias, cifrado) — hoje: volume `pgdata` (ver runbook `docs/GO-LIVE.md` §5).
 - Atualizações de CVE: imagens base `python:3.11-slim`/`node:20-alpine` pinadas por digest quando possível.
 
 ---
@@ -1351,7 +1350,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 | RNF-02 | Latência de extração IA (OpenRouter) | p50 < 15 s, p95 < 45 s por imagem; timeout 60s + 1 retry |
 | RNF-03 | Upload + anonimização | aceita ≤ 10 MB; valida + anonimiza em < 2 s |
 | RNF-04 | Disponibilidade | 99% mensal (MVP); degradado manual se OpenRouter fora |
-| RNF-05 | Concorrência IA | `worker-ai` = 3–5 jobs simultâneos (I/O-bound); backoff em 429 |
+| RNF-05 | Concorrência IA | background com `AI_WORKER_CONCURRENCY=3` (I/O-bound); backoff em 429 |
 | RNF-06 | Fila | profundidade estável; alerta > 50 (rate limit) |
 | RNF-07 | Idempotência de notificação | zero duplicatas em retries |
 | RNF-08 | Recuperação | job de IA falho reenfileira até 3× com backoff 1/5/30 min; dedupe por sha256 |
@@ -1402,17 +1401,17 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 
 > ⚠️ **ABERTO:** itens a decidir com o responsável antes da implementação.
 
-1. **Manuscrito infantil:** Nex-N2.5-Mini lê bem manuscrito em foto 1600px JPEG? Validar com 10 fixtures; se não, aceitar só impresso no MVP ou subir para modelo pago?
-2. **Precisão mínima aceitável** de matéria/data nas fixtures (ex.: ≥85% matéria, ≥75% data) com o tier free?
-3. **~~VLM escolhido~~ RESOLVIDO (v1.1):** OpenRouter `nex-agi/nex-n2.5-mini` como primário, substituição total do VLM local. Pendente só validar rate limit real e definir `AI_WORKER_CONCURRENCY` (3 vs 5).
+1. **Manuscrito infantil:** Nex-N2.5-Mini pago lê bem manuscrito em foto (derivada 1024px JPEG)? Validar com 10 fixtures; se não, aceitar só impresso no MVP.
+2. **Precisão mínima aceitável** de matéria/data nas fixtures (ex.: ≥85% matéria, ≥75% data) no tier pago?
+3. **~~VLM escolhido~~ RESOLVIDO (v1.1–v1.2):** OpenRouter `nex-agi/nex-n2.5-mini` como primário; desde o beta no tier **pago** (`AI_WORKER_CONCURRENCY=3`).
 4. **MinIO vs volume simples:** decidir após medir RAM total (agora com folga, MinIO mantido por padrão).
-5. **Autenticação inicial:** só Telegram no MVP ou e-mail/senha desde o início?
+5. **~~Autenticação inicial~~ RESOLVIDO (v1.2):** e-mail/senha (JWT + refresh, Argon2id) desde o início + vínculo Telegram por código; admin com RBAC.
 6. **Resumo diário** entra no MVP? (marcado opcional)
 7. **Fuso/múltiplos fusos** por criança: necessário?
 8. **Política exata de retenção** (90 dias é chute) + termo LGPD informando uso de API externa (OpenRouter/EUA) — validar com responsável jurídico.
 9. **Stitch:** confirmar `customColor`/variante após primeira geração; avaliar trocar `colorVariant` para `FIDELITY`.
-10. **Provedor de hospedagem da VPS**, domínio para o webhook e onde guardar `OPENROUTER_API_KEY` (Docker secrets) + rotação.
-11. **Limites OpenRouter free:** teto mensal por conta, alerta de 429, quando migrar para `nex-agi/nex-n2.5-mini` pago?
+10. **~~Provedor de hospedagem~~ RESOLVIDO (v1.2):** VPS própria (`/opt/hora_da_tarefa`, deploy via rsync + compose — ver `docs/GO-LIVE.md`); domínio/TLS pós-DNS para o webhook; segredos só no `.env` da VPS.
+11. **~~Limites OpenRouter~~ RESOLVIDO (v1.2):** tier pago no beta; teto mensal por conta + `GET /v1/usage` + alerta de 429; `:free` só contingência.
 
 ---
 
@@ -1423,8 +1422,10 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 | Completude | 30% | 28/30 | Pipeline OpenRouter end-to-end + env + LGPD anonimização; falta só validar fixtures. |
 | Testabilidade | 25% | 24/25 | AC em Gherkin + RNF mensuráveis (latência 60s, dedupe hash, 429/backoff); mocks definidos. |
 | Clareza | 20% | 19/20 | Endpoint, SDK, payload e thresholds explícitos; taxonomia de matérias pode expandir. |
-| Escopo | 15% | 14/15 | Non-goals claros (sem VLM local, sem OCR crítico); upgrade pago fora do MVP. |
+| Escopo | 15% | 14/15 | Non-goals claros (sem VLM local, sem OCR crítico); `:free` só contingência. |
 | Edge Cases | 10% | 9/10 | 429, timeout, duplicada, `AI_ENABLED=false`, `is_homework=false` cobertos. |
 | **Total** | 100% | **94/100** | **Pronta para implementação** (validar fixtures + rate limit real). |
 
 > v1.1 (2026-09-22): migração IA local → OpenRouter Nex-N2.5-Mini free. Gaps v1.0 (benchmark VLM OQ-3, RAM OQ-4) resolvidos por eliminação da inferência local.
+>
+> v1.2 (2026-09-23): beta na VPS — modelo pago, bot em polling (`RUN_MODE`), FSM real documentada, MinIO no compose, beat APScheduler, linhas do bot com nome da criança, auditoria A1–A7 corrigida. OQ-3/5/10/11 resolvidos; métricas Prometheus e backup diário seguem como alvo pré-GA.
