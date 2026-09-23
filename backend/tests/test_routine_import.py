@@ -132,6 +132,28 @@ def test_model_abstention_returns_422_retryable():
     assert r.json()["error"]["details"].get("retryable") is True
 
 
+def test_brazilian_time_variants_accepted():
+    import json
+
+    from unittest.mock import MagicMock
+
+    from app.services.vision_openrouter import extract_routine
+
+    payload = json.dumps({
+        "schedules": [{"weekday": 0, "start_time": "13h", "end_time": "13h50",
+                       "subject": "Português", "kind": "aula"}],
+        "activities": [], "availability": [],
+        "confidence": 0.9, "needs_review": False, "warnings": [],
+    })
+    fake_resp = MagicMock(choices=[MagicMock(message=MagicMock(content=payload))],
+                          usage=MagicMock(prompt_tokens=10, completion_tokens=10))
+    with patch("app.services.vision_openrouter._chat_json", return_value=fake_resp):
+        r = extract_routine(text="grade")
+    assert r.schedules[0].start_time == "13:00"
+    assert r.schedules[0].end_time == "13:50"
+    assert r.warnings == []
+
+
 def test_weekday_list_expands_to_multiple_entries():
     import json
 

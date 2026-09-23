@@ -70,6 +70,55 @@ def test_reprocess_endpoint_reruns_extraction():
     assert client.post(f"/v1/homeworks/{hid}/reprocess", headers=h2).status_code == 403
 
 
+def test_beat_stops_after_max_auto_attempts():
+    from app.services.vision_openrouter import OpenRouterRateLimited
+    from app.tasks import beat as B
+    from app.tasks.extract import MAX_AUTO_ATTEMPTS, get_homework
+
+    from app.main import app
+    from fastapi.testclient import TestClient
+
+    client = TestClient(app)
+    h, _ = make_auth(client)
+    cid = client.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    hid = _upload_stuck(client, h, cid)
+    # esgota as tentativas automáticas
+    for _ in range(MAX_AUTO_ATTEMPTS + 2):
+        with patch("app.services.vision_openrouter.extract_homework",
+                   side_effect=OpenRouterRateLimited("429")):
+            B.run_beat_tick(now=datetime.now(TZ))
+    rec = get_homework(hid)
+    from app.core.db import session_scope
+    from app.models import Homework
+
+    with session_scope() as s:
+        hw = s.get(Homework, hid)
+        attempts = (hw.extraction_json or {}).get("meta", {}).get("attempts", 0)
+    assert attempts <= MAX_AUTO_ATTEMPTS + 1  # inicial + beats até o teto
+    # manual ainda funciona após o teto
+    with patch("app.services.vision_openrouter.extract_homework", return_value=_ok_result()):
+        r = client.post(f"/v1/homeworks/{hid}/reprocess", headers=h)
+        assert r.status_code == 202
+
+
+def _upload_stuck(client, h, cid):
+    import io
+    import uuid
+
+    from PIL import Image
+
+    from app.services.vision_openrouter import OpenRouterRateLimited
+
+    img = Image.new("RGB", (800, 600), (5, 5, 5))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    with patch("app.services.vision_openrouter.extract_homework",
+               side_effect=OpenRouterRateLimited("429")):
+        return client.post("/v1/homeworks/upload",
+                           files={"file": (f"{uuid.uuid4()}.jpg", buf.getvalue(), "image/jpeg")},
+                           data={"child_id": cid}, headers=h).json()["homework_id"]
+
+
 def test_beat_retries_stale_processing():
     from app.main import app
     from app.services.vision_openrouter import OpenRouterRateLimited

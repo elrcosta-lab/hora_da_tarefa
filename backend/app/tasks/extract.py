@@ -222,6 +222,7 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
             return None
         if hw.extraction_status in ("ok", "baixa_confianca", "descartada"):
             return _to_dict(hw)
+        _bump_attempts(hw)
         img = s.query(HomeworkImage).filter_by(homework_id=homework_id).first()
         if img is None:
             hw.extraction_status = "falhou"
@@ -287,6 +288,20 @@ def _to_utc_naive(dt):
     return dt
 
 
+def _attempts(hw) -> int:
+    return int((hw.extraction_json or {}).get("meta", {}).get("attempts", 0))
+
+
+def _bump_attempts(hw) -> int:
+    meta = dict((hw.extraction_json or {}).get("meta", {}))
+    meta["attempts"] = _attempts(hw) + 1
+    hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
+    return meta["attempts"]
+
+
+MAX_AUTO_ATTEMPTS = 3  # disjuntor: além disso só manual (reprocess) — protege créditos
+
+
 def retry_stale_extractions(now: datetime | None = None, older_than_minutes: int = 5) -> int:
     """Beat: reexecuta extrações travadas em processando/falhou além da janela. Nunca derruba o tick."""
     from datetime import timedelta as _td
@@ -304,6 +319,11 @@ def retry_stale_extractions(now: datetime | None = None, older_than_minutes: int
                 stale_ids.append(hw.id)
     for hid in stale_ids:
         try:
+            with session_scope() as s:
+                hw = s.get(Homework, hid)
+                if hw is None or _attempts(hw) >= MAX_AUTO_ATTEMPTS:
+                    continue
+                _bump_attempts(hw)
             run_extraction(hid)
             retried += 1
         except Exception:

@@ -97,7 +97,7 @@ def _get_client(settings: Settings):
 
 def _parse_json_content(content: str | None) -> dict:
     if not content or not content.strip():
-        raise ValueError("empty content (truncado? aumente OPENROUTER_MAX_TOKENS)")
+        raise ValueError("empty content (provider intermitente; retry cobre)")
     text = content.strip()
     if text.startswith("```"):
         # remove cercas markdown caso o modelo desobedeça "só JSON"
@@ -197,10 +197,18 @@ def _coerce_weekday(value, warnings: list, where: str):
 
 
 def _coerce_hm(value, warnings: list, where: str):
+    """HH:MM e variantes brasileiras (13h, 13h40, 13h40min, 13 hs) → HH:MM."""
     import re
 
-    if isinstance(value, str) and re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", value.strip()):
-        return value.strip()
+    if isinstance(value, str):
+        s = value.strip().lower().replace("hs", "").replace("horas", "").replace("hora", "").strip()
+        m = re.fullmatch(r"([01]?\d|2[0-3])\s*h\s*([0-5]?\d)?\s*(?:min)?", s)
+        if m:
+            hh, mm = int(m.group(1)), int(m.group(2) or 0)
+            if 0 <= hh <= 23 and 0 <= mm <= 59:
+                return f"{hh:02d}:{mm:02d}"
+        if re.fullmatch(r"([01]\d|2[0-3]):[0-5]\d", s):
+            return s
     warnings.append(f"{where}: horário inválido {value!r} (descartado)")
     return None
 
