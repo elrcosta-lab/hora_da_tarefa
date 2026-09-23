@@ -12,9 +12,9 @@
 
 ### 1.1 Resumo Executivo
 
-O **Hora da Tarefa** é um SaaS que ajuda pais e responsáveis a organizar a lição de casa dos filhos de ponta a ponta. O responsável envia uma foto da tarefa (caderno, agenda ou bilhete escolar) via app web ou Telegram; o modelo multimodal `nex-agi/nex-n2.5-mini:free` via API OpenRouter (OpenAI-compatible, `https://openrouter.ai/api/v1`) recebe imagem + texto e extrai data de envio, data de entrega, matéria e enunciado em JSON validado. O sistema cruza essas informações com a grade escolar e as atividades extraescolares da criança para sugerir automaticamente o melhor dia e horário livre, e então dispara lembretes e cobranças de conclusão via bot do Telegram.
+O **Hora da Tarefa** é um SaaS que ajuda pais e responsáveis a organizar a lição de casa dos filhos de ponta a ponta. O responsável envia uma foto da tarefa (caderno, agenda ou bilhete escolar) via app web ou Telegram; o modelo multimodal `nex-agi/nex-n2.5-mini` via API OpenRouter (OpenAI-compatible, `https://openrouter.ai/api/v1`) recebe imagem + texto e extrai data de envio, data de entrega, matéria e enunciado em JSON validado. O sistema cruza essas informações com a grade escolar e as atividades extraescolares da criança para sugerir automaticamente o melhor dia e horário livre, e então dispara lembretes e cobranças de conclusão via bot do Telegram.
 
-O valor central é **transformar uma foto desorganizada em um compromisso agendado, lembrado e concluído** — sem planilhas, sem esquecimentos e sem custo de IA (tier gratuito OpenRouter, sem VLM local na VPS).
+O valor central é **transformar uma foto desorganizada em um compromisso agendado, lembrado e concluído** — sem planilhas, sem esquecimentos e com custo irrisório de IA (OpenRouter pago, sem VLM local na VPS).
 
 ### 1.2 Problema
 
@@ -23,7 +23,7 @@ Pais e responsáveis enfrentam diariamente:
 - **Fragmentação da informação:** a lição chega por caderno, agenda de papel, bilhete, grupo de WhatsApp da escola e fala do filho — nunca em um só lugar.
 - **Falta de contexto de tempo:** mesmo sabendo da tarefa, o responsável não sabe *quando* a criança terá tempo livre, considerando aula, natação, inglês, terapia e sono.
 - **Esquecimento e atraso:** entregas perdidas geram cobrança da escola e conflito familiar.
-- **Custo de ferramentas de IA:** soluções que usam APIs de visão pagas (GPT-4o, Gemini Pro) cobram por imagem e por token, inviabilizando preço popular no Brasil. O MVP usa o tier gratuito OpenRouter (`nex-agi/nex-n2.5-mini:free`, multimodal texto+imagem, 262k contexto), com custo marginal zero e rate limit gerenciado por fila + retry.
+- **Custo de ferramentas de IA:** soluções que usam APIs de visão pagas (GPT-4o, Gemini Pro) cobram por imagem e por token, inviabilizando preço popular no Brasil. O MVP usa o modelo pago OpenRouter (`nex-agi/nex-n2.5-mini`, multimodal texto+imagem, 262k contexto, US$ 0,025/0,10 por 1M tokens), com custo de centavos por mil extrações e rate limit gerenciado por fila + retry.
 - **Sobrecarga cognitiva:** a "gestão da lição de casa" hoje é feita de memória e boa vontade, sem sistema de acompanhamento nem histórico.
 
 **Por que agora:** modelos multimodais gratuitos via OpenRouter (Nex-N2.5-Mini (MoE multimodal 35B/3B ativos, 262k contexto, Apache 2.0)) entregam OCR + extração semântica direto da imagem via API, sem precisar de GPU/VPS parruda. Isso elimina a complexidade de VLM quantizado local (SmolVLM2, Moondream2, Qwen2-VL-2B em CPU) e libera a VPS de 1 vCPU / 4GB para só API + banco + fila. Privacidade é tratada por anonimização pré-envio (redimensionar ≤1600px, remover EXIF, hash SHA-256, sem PII em logs).
@@ -33,7 +33,7 @@ Pais e responsáveis enfrentam diariamente:
 Um fluxo em quatro etapas:
 
 1. **Entrada por foto** — responsável envia imagem no Telegram (ou web upload).
-2. **Extração via OpenRouter** — anonimização local (resize, strip EXIF, hash) + chamada multimodal ao `nex-agi/nex-n2.5-mini:free` que devolve **JSON validado por schema** (sem OCR/VLM local).
+2. **Extração via OpenRouter** — anonimização local (resize, strip EXIF, hash) + chamada multimodal ao `nex-agi/nex-n2.5-mini` que devolve **JSON validado por schema** (sem OCR/VLM local).
 3. **Motor de agendamento** — cruza matéria, prazo e disponibilidade da criança (grade escolar + atividades fixas + sono + deslocamento) e calcula o(s) slot(s) livres com folga.
 4. **Orquestração por Telegram** — confirma o agendamento, envia lembretes (24h/2h antes) e coleta a confirmação de conclusão, alimentando um dashboard de status.
 
@@ -44,7 +44,7 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 - **Objetivo 1:** Reduzir o tempo de registro de uma tarefa de ~3 minutos (digitação) para **≤ 30 segundos** (foto + confirmação).
 - **Objetivo 2:** Atingir **≥ 85% de precisão** de extração automática nos campos críticos (data de entrega e matéria), com revisão humana no restante.
 - **Objetivo 3:** Reduzir a taxa de tarefas atrasadas em **≥ 40%** nos primeiros 60 dias de uso por família ativa.
-- **Objetivo 4:** Operar o núcleo de IA a **custo marginal R$ 0,00 por imagem** (tier gratuito OpenRouter `nex-agi/nex-n2.5-mini:free`), sem VLM local. Respeitar rate limit do tier free com fila + backoff + cache por hash.
+- **Objetivo 4:** Operar o núcleo de IA a **custo marginal ≤ R$ 0,01 por imagem** (`nex-agi/nex-n2.5-mini` pago), sem VLM local. Monitorar tokens e gasto mensal (logs em `extraction_json.meta`); manter backoff + cache por hash.
 - **Objetivo 5:** Manter o stack completo rodando em **1 vCPU / 4GB RAM / 50GB disco** (sem carga de IA local — só API, Postgres, Redis, bot).
 
 ### 1.5 Não-Objetivos (Out of Scope estratégico)
@@ -222,14 +222,14 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 
 ### RF-05 — Pipeline Extração via OpenRouter (M)
 
-**Descrição:** Processar a imagem para extrair campos estruturados: `data_envio`, `data_entrega` (quando visível), `materia`, `enunciado`, `professor` (opcional), `confianca` por campo — via API OpenRouter modelo `nex-agi/nex-n2.5-mini:free` (multimodal imagem+texto, 262k contexto, structured output).
+**Descrição:** Processar a imagem para extrair campos estruturados: `data_envio`, `data_entrega` (quando visível), `materia`, `enunciado`, `professor` (opcional), `confianca` por campo — via API OpenRouter modelo `nex-agi/nex-n2.5-mini` (multimodal imagem+texto, 262k contexto, structured output).
 
 **Regras:**
 - Etapa 1: **Anonimização local** — valida MIME por magic bytes, auto-orienta EXIF e remove EXIF, redimensiona para máx. 1600px lado maior, converte para JPEG otimizado, calcula SHA-256 para deduplicação/cache (não reprocessa hash igual).
-- Etapa 2: **Chamada OpenRouter** — `POST https://openrouter.ai/api/v1/chat/completions` com `model=nex-agi/nex-n2.5-mini:free`, mensagens `[{role:user, content:[{type:text, text:prompt},{type:image_url, image_url:{url:data:image/jpeg;base64,...}}]}]`, `response_format={type:json_object}`, `max_tokens=2048`, `temperature=0.1`. Headers `Authorization: Bearer $OPENROUTER_API_KEY`, `HTTP-Referer`, `X-Title`.
+- Etapa 2: **Chamada OpenRouter** — `POST https://openrouter.ai/api/v1/chat/completions` com `model=nex-agi/nex-n2.5-mini`, mensagens `[{role:user, content:[{type:text, text:prompt},{type:image_url, image_url:{url:data:image/jpeg;base64,...}}]}]`, `response_format={type:json_object}`, `max_tokens=2048`, `temperature=0.1`. Headers `Authorization: Bearer $OPENROUTER_API_KEY`, `HTTP-Referer`, `X-Title`.
 - Se `confianca < 0.75` em campo crítico (data_entrega ou materia) → estado `needs_review`.
 - Normalização de datas relativas ("amanhã", "sexta") com base na data de envio.
-- Timeout da chamada: 60s com retry 1× + backoff; rate limit 429 do tier free → reenfileira com backoff exponencial (1/5/30 min, máx. 3 tentativas); ao exceder, marca `extraction_failed` e oferece entrada manual.
+- Timeout da chamada: 60s com retry 1× + backoff; rate limit 429 → reenfileira com backoff exponencial (1/5/30 min, máx. 3 tentativas); ao exceder, marca `extraction_failed` e oferece entrada manual.
 - Sem VLM/LLM local, sem Ollama/llama.cpp, sem Tesseract/PaddleOCR no caminho crítico (OCR local opcional apenas como fallback futuro).
 
 **Critérios de aceite:**
@@ -359,7 +359,7 @@ pending_extraction → needs_review → agendada → em_andamento
 | RNF-01 | Performance | Extração de tarefa (foto → JSON via OpenRouter) | P50 ≤ 15s, P95 ≤ 45s; timeout 60s + 1 retry; backoff 1/5/30 min em 429 |
 | RNF-02 | Performance | Resposta da API (consultas/CRUD) | P95 < 800ms (excluindo extração) |
 | RNF-03 | Performance | Processamento concorrente de extração | Fila I/O-bound; concorrência 3–5; dedupe por SHA-256 (sem reprocessar) |
-| RNF-04 | Custo | Custo de IA por imagem | R$ 0,00 (tier free OpenRouter); sem custo de infra GPU; monitorar rate limit e uso mensal |
+| RNF-04 | Custo | Custo de IA por imagem | ≤ R$ 0,01 (OpenRouter pago US$ 0,025/0,10 por 1M); sem custo de infra GPU; monitorar tokens e gasto mensal |
 | RNF-05 | Disponibilidade | Uptime do núcleo (bot + API) | ≥ 99,0% mensal, excluindo janelas de manutenção |
 | RNF-06 | Segurança | Autenticação e autorização | Hash de senha (Argon2id) ou OAuth; autorização validada no servidor; sessão expira em 30 dias |
 | RNF-07 | Segurança | Isolamento de dados de menor | Criptografia em repouso de imagens e dados sensíveis; acesso por escopo de conta/criança |
@@ -381,7 +381,7 @@ pending_extraction → needs_review → agendada → em_andamento
 
 - **VPS:** 1 vCPU, 4 GB RAM, 50 GB disco, 4 TB de banda.
 - **Execução:** todos os serviços em **containers Docker** (Docker Compose no MVP).
-- **IA 100% via API:** nenhuma inferência local — sem Ollama, llama.cpp, Tesseract/PaddleOCR ou modelos `.gguf` na VPS. Worker de IA é leve (~200 MB, só HTTP + Pillow). Consequência: fila pode ter concorrência 3–5 sem estourar RAM; gargalo passa a ser rate limit do tier free OpenRouter (gerenciado com backoff + cache por hash).
+- **IA 100% via API:** nenhuma inferência local — sem Ollama, llama.cpp, Tesseract/PaddleOCR ou modelos `.gguf` na VPS. Worker de IA é leve (~200 MB, só HTTP + Pillow). Consequência: fila pode ter concorrência 3–5 sem estourar RAM; picos são absorvidos com backoff + cache por hash.
 
 ### 6.2 Componentes e orçamento de recursos (alvo — sem IA local)
 
@@ -391,7 +391,7 @@ pending_extraction → needs_review → agendada → em_andamento
 | Banco | PostgreSQL 16 (SQLite permitido no dev) | ~150–300 MB | `pgvector` opcional pós-MVP |
 | Cache/Fila | Redis 7 (ou fila em Postgres) | ~80–150 MB | Fila de extração (concorrência 3–5), rate limiting, cache por SHA-256, dedupe Telegram |
 | Pré-processamento imagem | Pillow (resize, strip EXIF, JPEG) | ~50–100 MB/job | Sem OCR/VLM local; máx. 1600px, JPEG q=82 |
-| VLM/LLM | **OpenRouter `nex-agi/nex-n2.5-mini:free`** | 0 MB na VPS (API externa) | Multimodal texto+imagem, 262k contexto, 32k saída, structured output, custo zero |
+| VLM/LLM | **OpenRouter `nex-agi/nex-n2.5-mini`** | 0 MB na VPS (API externa) | Multimodal texto+imagem, 262k contexto, 32k saída, structured output, microcusto |
 | Bot | Worker Python (python-telegram-bot) | ~100 MB | Long polling ou webhook |
 | Reverse proxy | Caddy/Nginx | ~50 MB | TLS automático |
 
@@ -399,16 +399,16 @@ pending_extraction → needs_review → agendada → em_andamento
 
 ### 6.3 Modelo — OpenRouter Nex-N2.5-Mini (substitui IA local)
 
-- **Modelo:** `nex-agi/nex-n2.5-mini:free` — MoE multimodal 35B total / 3B ativos por token, Apache 2.0, visão + raciocínio + function calling, 262k contexto, structured output.
+- **Modelo:** `nex-agi/nex-n2.5-mini` — MoE multimodal 35B total / 3B ativos por token, Apache 2.0, visão + raciocínio + function calling, 262k contexto, structured output.
 - **Endpoint:** `POST https://openrouter.ai/api/v1/chat/completions` (OpenAI-compatible). SDK: `openai` Python com `base_url` + `api_key=$OPENROUTER_API_KEY`.
-- **Por que ele:** custo zero (tier free), dispensa GPU/CPU pesada, aceita imagem em base64/data-URL direto (sem OCR separado), responde JSON estrito com `is_homework`, `subject`, `title`, `statement`, `due_at`, `estimated_minutes`, `priority`, `confidence`, `needs_review`.
+- **Por que ele:** microcusto (créditos OpenRouter), dispensa GPU/CPU pesada, aceita imagem em base64/data-URL direto (sem OCR separado), responde JSON estrito com `is_homework`, `subject`, `title`, `statement`, `due_at`, `estimated_minutes`, `priority`, `confidence`, `needs_review`.
 - **Limites do free:** rate limited (429 possível em pico) → fila com backoff exponencial + cache por `sha256` (nunca reprocessa mesma foto) + fallback para entrada manual se 3 retries falharem. Provedor pago `nex-agi/nex-n2.5-mini` (pago, upgrade sem trocar código) é upgrade futuro sem trocar código (só troca `OPENROUTER_MODEL`).
 - **Modelos locais anteriores (SmolVLM2, Moondream2, Qwen2-VL-2B, Llama 3.2 1B) — REMOVIDOS do MVP.** Mantidos apenas como ideia de fallback offline pós-MVP, fora de escopo.
 
 ### 6.4 Fallback e evolução (pós-MVP — RF-15 redefinido)
 
 - RF-15 original (fallback para API externa quando confiança < limiar) **está incorporado**: OpenRouter já é o primário.
-- Evoluções futuras: (a) trocar `:free` pelo pago para SLA maior, (b) reintroduzir OCR local (Tesseract) como pré-enriquecimento do prompt, (c) multi-provider OpenRouter (`provider` routing/failover).
+- Evoluções futuras: (a) fallback `:free` em contingência, (b) reintroduzir OCR local (Tesseract) como pré-enriquecimento do prompt, (c) multi-provider OpenRouter (`provider` routing/failover).
 - **Guardrails mantidos:** limite mensal de chamadas por conta, mascaramento/PII mínimo em logs, registro de custo/latência/confiança por extração. Flag `AI_ENABLED=true/false` para desligar IA e operar em modo manual.
 
 ---
@@ -426,7 +426,7 @@ flowchart TD
     D --> E
     E -->|nova| F[Enfileira job OpenRouter]
     E -->|duplicada| Z[Responde: já registrada, reaproveita extração]
-    F --> G[POST OpenRouter nex-n2.5-mini:free - imagem+prompt → JSON]
+    F --> G[POST OpenRouter nex-n2.5-mini - imagem+prompt → JSON]
     G --> J{Confiança >= 0.75?}
     J -->|Não| K[needs_review]
     J -->|Sim| L[agendada provisória]
@@ -561,7 +561,7 @@ sequenceDiagram
 | Risco | Prob. | Impacto | Mitigação |
 |---|---|---|---|
 | OCR/leitura ruim em caligrafia de criança | Alta | Alto | Prompt multimodal direto na imagem (Nex-N2.5-Mini) sem OCR intermediário; revisão humana obrigatória em baixa confiança; anonimização preserva legibilidade (JPEG q=82, 1600px) |
-| Rate limit 429 do tier free OpenRouter | Média | Médio | Fila com backoff 1/5/30 min (3 retries), cache por SHA-256 (nunca reprocessa), upgrade para modelo pago só trocando `OPENROUTER_MODEL` |
+| Rate limit 429 do OpenRouter | Média | Médio | Fila com backoff 1/5/30 min (3 retries), cache por SHA-256 (nunca reprocessa), fallback `:free` em contingência |
 | Timeout/latência da API externa | Média | Médio | Timeout 60s + retry 1×; modo manual sempre disponível; concorrência 3–5 sem OOM |
 | Escalada de custo se migrar para pago | Baixa | Médio | Modelo free como padrão; limites mensais por conta e alerta de custo; log de tokens por extração |
 | Dados sensíveis de menores (LGPD) | Média | Alto | Anonimização pré-envio (resize, strip EXIF, hash), HTTPS, sem PII em logs, retenção 90 dias, direito de exclusão |
@@ -636,8 +636,8 @@ sequenceDiagram
 | Versão | Data | Autor | Alterações |
 |--------|------|-------|-----------|
 | 1.0 | 2026-09-22 | Subagente PRD | Versão inicial completa (MVP + pós-MVP, IA local, motor de slots, Telegram) |
-| 1.1 | 2026-09-22 | OpenCode | Migração IA local → OpenRouter `nex-agi/nex-n2.5-mini:free` (substituição total, anonimização pré-envio, sem Ollama/Tesseract no caminho crítico) |
+| 1.1 | 2026-09-22 | OpenCode | Migração IA local → OpenRouter `nex-agi/nex-n2.5-mini` (substituição total, anonimização pré-envio, sem Ollama/Tesseract no caminho crítico) |
 
 ---
 
-> **A [DEFINIR] no momento:** nome comercial definitivo, provedor de pagamento, política exata de retenção legal de imagens, pesos iniciais do motor de slots (tunar com dados reais), `OPENROUTER_API_KEY` de produção e limites de rate limit do tier free em pico (definir concorrência 3 vs 5 e alertas).
+> **A [DEFINIR] no momento:** nome comercial definitivo, provedor de pagamento, política exata de retenção legal de imagens, pesos iniciais do motor de slots (tunar com dados reais), `OPENROUTER_API_KEY` de produção com teto mensal de gasto + alertas (definir concorrência 3 vs 5).
