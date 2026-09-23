@@ -24,7 +24,7 @@ class ConsentRequired(Exception):
 
 
 def _to_dict(u: AppUser) -> dict:
-    return {"user_id": u.id, "name": u.name, "email": u.email,
+    return {"user_id": u.id, "name": u.name, "email": u.email, "role": u.role or "user",
             "telegram_user_id": u.telegram_user_id,
             "link_code": u.telegram_link_code,
             "lgpd_consent_at": u.lgpd_consent_at.isoformat() if u.lgpd_consent_at else None,

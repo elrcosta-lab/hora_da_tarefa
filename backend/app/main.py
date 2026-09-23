@@ -5,6 +5,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
 from app.api.children import router as children_router
 from app.api.homeworks import router as homeworks_router
@@ -20,9 +21,14 @@ from fastapi.responses import JSONResponse
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from app.core.db import init_db
+    from app.tasks.admin import ensure_admin
     from app.tasks.beat import start_scheduler
 
     init_db()
+    try:
+        ensure_admin()
+    except Exception:
+        pass
     sched = start_scheduler()
     yield
     try:
@@ -65,6 +71,12 @@ async def _ratelimited_handler(request, exc: RateLimited):
         headers={"Retry-After": str(exc.retry_after)})
 
 
+@app.exception_handler(PermissionError)
+async def _forbidden_handler(request, exc: PermissionError):
+    return JSONResponse(status_code=403, content={
+        "error": {"code": "FORBIDDEN", "message": "Acesso restrito a administradores.", "details": {}}})
+
+
 @app.middleware("http")
 async def _global_rate_limit(request, call_next):
     if request.url.path.startswith("/v1/"):
@@ -80,6 +92,7 @@ async def _global_rate_limit(request, call_next):
     return await call_next(request)
 
 app.include_router(auth_router)
+app.include_router(admin_router)
 app.include_router(children_router)
 app.include_router(homeworks_router)
 app.include_router(suggestions_router)

@@ -18,6 +18,7 @@ class AppUser(Base):
 
     id: Mapped[str] = mapped_column(Text, primary_key=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(Text, nullable=False)
+    role: Mapped[str] = mapped_column(Text, nullable=False, default="user")
     email: Mapped[str | None] = mapped_column(Text, nullable=True, unique=True)
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, unique=True)
