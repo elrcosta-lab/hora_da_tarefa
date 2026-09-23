@@ -14,7 +14,8 @@ def flush_outbox_to_telegram() -> int:
     from app.bot import telegram_api as _tg
 
     settings = get_settings()
-    if not settings.TELEGRAM_LIVE_SEND or settings.TELEGRAM_BOT_TOKEN in ("change-me", "test-token", ""):
+    live = settings.TELEGRAM_LIVE_SEND or settings.TELEGRAM_POLLING
+    if not live or settings.TELEGRAM_BOT_TOKEN in ("change-me", "test-token", ""):
         return 0
     sent = 0
     for chat_id, text in drain_outbox():

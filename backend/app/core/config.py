@@ -26,6 +26,8 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = "change-me"
     TELEGRAM_WEBHOOK_SECRET: str = "change-me"
     TELEGRAM_LIVE_SEND: bool = False
+    # Polling (sem URL pública): getUpdates em thread dedicada. Não usar junto do webhook.
+    TELEGRAM_POLLING: bool = False
     RUN_MODE: str = "polling"
 
     JWT_SECRET: str  # sem default de propósito: falhar fechado sem segredo explícito

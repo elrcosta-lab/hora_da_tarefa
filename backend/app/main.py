@@ -30,7 +30,23 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
     sched = start_scheduler()
+    poll_stop = None
+    try:
+        from app.core.config import get_settings
+
+        _settings = get_settings()
+        if _settings.TELEGRAM_POLLING and _settings.TELEGRAM_BOT_TOKEN not in ("change-me", "test-token", ""):
+            from app.bot.polling import start_polling_thread
+
+            poll_stop, _ = start_polling_thread(_settings.TELEGRAM_BOT_TOKEN)
+    except Exception:
+        pass
     yield
+    try:
+        if poll_stop is not None:
+            poll_stop.set()
+    except Exception:
+        pass
     try:
         sched.shutdown(wait=False)
     except Exception:

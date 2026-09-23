@@ -67,3 +67,25 @@ def send_message(token: str, chat_id: int, text: str, timeout: float = 20.0) -> 
     if not body.get("ok"):
         raise TelegramError(f"sendMessage falhou: {body.get('description', r.text[:200])}")
     return (body.get("result") or {}).get("message_id")
+
+
+def get_updates(token: str, offset: int | None = None, timeout: float = 25.0) -> list:
+    """Long polling: espera até ~timeout por updates. Retorna lista (pode ser vazia)."""
+    params: dict = {"timeout": int(timeout), "allowed_updates": ["message", "callback_query"]}
+    if offset is not None:
+        params["offset"] = offset
+    try:
+        r = httpx.get(f"{_base(token)}/getUpdates", params=params, timeout=timeout + 10)
+    except Exception as exc:
+        raise TelegramError(f"getUpdates rede: {exc}") from exc
+    try:
+        body = r.json()
+    except Exception as exc:
+        raise TelegramError(f"getUpdates resposta inválida: {exc}") from exc
+    if not body.get("ok"):
+        # 409 = outro consumer (webhook ativo) — o chamador decide; propaga como erro
+        raise TelegramError(f"getUpdates falhou: {body.get('description', r.text[:200])}")
+    result = body.get("result")
+    if not isinstance(result, list):
+        raise TelegramError("getUpdates sem result[]")
+    return result
