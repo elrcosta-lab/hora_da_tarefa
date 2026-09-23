@@ -154,6 +154,30 @@ def test_brazilian_time_variants_accepted():
     assert r.warnings == []
 
 
+def test_subject_taxonomy_normalized_on_import():
+    c = _client()
+    h, cid = _auth(c)
+    raw = _fake_routine(schedules=[{"weekday": 0, "start_time": "07:30", "end_time": "08:20",
+                                    "subject": "MATEMATICA ELOISA", "kind": "aula"}])
+    with patch("app.services.vision_openrouter.extract_routine", return_value=raw):
+        r = c.post(f"/v1/children/{cid}/routine/import", data={"text": "x"}, headers=h)
+    assert r.status_code == 201, r.text
+    ag = c.get(f"/v1/children/{cid}/agenda", headers=h).json()
+    assert ag["schedules"][0]["subject"] == "Matemática"
+    assert any("MATEMATICA ELOISA" in w for w in r.json()["warnings"])
+
+
+def test_normalize_subject_unit():
+    from app.services.textnorm import normalize_subject
+
+    assert normalize_subject("MATEMATICA ELOISA") == ("Matemática", True)
+    assert normalize_subject("EDUCACAO FISICA TATI") == ("Educação Física", True)
+    assert normalize_subject("Matemática") == ("Matemática", False)
+    assert normalize_subject("Arte") == ("Artes", True)
+    assert normalize_subject("Robótica") == ("Outro", True)
+    assert normalize_subject("") == ("Outro", False)
+
+
 def test_weekday_list_expands_to_multiple_entries():
     import json
 
@@ -173,6 +197,63 @@ def test_weekday_list_expands_to_multiple_entries():
         r = c.post(f"/v1/children/{cid}/routine/import", data={"text": "aula seg a sex"}, headers=h)
     assert r.status_code == 201, r.text
     assert r.json()["schedules_created"] == 5
+
+
+def test_due_inferred_from_next_class():
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.tasks.extract import infer_due_from_grade
+    from app.tasks import routine as R
+
+    child = R.create_child("Ana")
+    R.save_schedules(child["id"], [
+        {"weekday": 0, "start_time": "07:30", "end_time": "08:20", "subject": "MATEMATICA ELOISA"},
+        {"weekday": 2, "start_time": "07:30", "end_time": "08:20", "subject": "Matemática"},
+    ], replace=True)
+    # terça 22/09 → próxima Matemática é qua 23/09 23:59
+    due = infer_due_from_grade(child["id"], "Matemática",
+                               now=datetime(2026, 9, 22, 10, 0, tzinfo=ZoneInfo("America/Sao_Paulo")))
+    assert due is not None and due.isoformat()[:10] == "2026-09-23" and due.hour == 23
+    assert infer_due_from_grade(child["id"], "Robótica") is None
+    assert infer_due_from_grade(child["id"], None) is None
+
+
+def test_extraction_without_date_uses_grade_inference():
+    import io
+    import uuid
+
+    from PIL import Image
+    from unittest.mock import patch
+
+    from app.main import app
+    from fastapi.testclient import TestClient
+
+    from app.schemas.extraction import ExtractionResult
+    from app.tasks import routine as R
+
+    c = TestClient(app)
+    h, _ = make_auth(c)
+    cid = c.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    R.save_schedules(cid, [{"weekday": 2, "start_time": "07:30", "end_time": "08:20",
+                            "subject": "Matemática"}], replace=True)
+    no_date = ExtractionResult(is_homework=True, subject="Matemática", title="Lista",
+                               statement="Ex 1", due_at=None, estimated_minutes=30,
+                               priority=1, confidence=0.9, needs_review=False,
+                               extraction_status="ok", meta={})
+    img = Image.new("RGB", (800, 600), (3, 3, 3))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    with patch("app.services.vision_openrouter.extract_homework", return_value=no_date):
+        hid = c.post("/v1/homeworks/upload",
+                     files={"file": (f"{uuid.uuid4()}.jpg", buf.getvalue(), "image/jpeg")},
+                     data={"child_id": cid}, headers=h).json()["homework_id"]
+    from app.tasks.extract import get_homework
+
+    rec = get_homework(hid)
+    assert rec["due_at"] is not None  # inferida da grade
+    assert rec["needs_review"] is True
+    assert rec["extraction_json"]["meta"]["due_inferred_from"] == "grade"
 
 
 def test_import_forbidden_cross_account():

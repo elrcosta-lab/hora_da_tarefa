@@ -162,10 +162,11 @@ async def import_routine_view(
         return _err("SCHEDULE_OVERLAP", str(exc), 409)
     except R.Validation as exc:
         return _err("VALIDATION_ERROR", str(exc), 400)
+    warnings = list(result.warnings) + sched.get("normalized", [])
     return {"child_id": child_id,
             "schedules_created": sched["created"],
             "activities_created": acts,
             "availability_saved": avail["created"],
             "needs_review": result.needs_review,
             "confidence": result.confidence,
-            "warnings": result.warnings}
+            "warnings": warnings}

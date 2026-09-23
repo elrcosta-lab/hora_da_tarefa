@@ -35,6 +35,8 @@ def _to_dict(hw: Homework) -> dict:
     needs_review = None
     if hw.extraction_status not in ("descartada", "falhou", "processando"):
         needs_review = not (hw.subject and hw.due_at)
+        if (hw.extraction_json or {}).get("meta", {}).get("due_inferred_from"):
+            needs_review = True  # data inferida sempre passa por confirmação
     return {
         "homework_id": hw.id,
         "child_id": hw.child_id,
@@ -212,6 +214,40 @@ def _parse_result_due(due_str: str | None):
         return None
 
 
+def infer_due_from_grade(child_id: str, subject: str | None, now=None):
+    """Próxima aula da matéria → entrega 23:59 (item c). None sem grade/match.
+
+    Ordem de resolução da entrega: 1) data do professor na foto, 2) esta
+    inferência, 3) null (horizonte +7d + revisão manual).
+    """
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+    from zoneinfo import ZoneInfo
+
+    from app.services.textnorm import normalize_subject
+    from app.tasks import routine as _R
+
+    if not subject:
+        return None
+    want, _ = normalize_subject(subject)
+    if want in ("Outro", "Aula"):
+        return None
+    now = now or _dt.now(ZoneInfo("America/Sao_Paulo"))
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=ZoneInfo("America/Sao_Paulo"))
+    want_n = normalize_subject(want)[0]
+    for delta in range(14):
+        day = (now + _td(days=delta)).date()
+        wd = day.weekday()
+        for s in _R.list_schedules(child_id):
+            if int(s.get("weekday", -1)) != wd:
+                continue
+            if normalize_subject(s.get("subject") or "")[0] == want_n:
+                return _dt(day.year, day.month, day.day, 23, 59,
+                           tzinfo=ZoneInfo("America/Sao_Paulo"))
+    return None
+
+
 def run_extraction(homework_id: str, client=None) -> dict | None:
     """Background: storage→anonimiza→OpenRouter→atualiza registro. Idempotente por homework_id."""
     from app.services.vision_openrouter import ExtractionFailed, OpenRouterRateLimited, extract_homework
@@ -268,6 +304,14 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
         hw.extraction_confidence = result.confidence
         hw.extraction_status = result.extraction_status
         hw.extraction_json = result.model_dump()
+        if hw.due_at is None and hw.subject:
+            inferred = infer_due_from_grade(hw.child_id, hw.subject)
+            if inferred is not None:
+                hw.due_at = inferred
+                hw.extraction_status = "baixa_confianca"
+                meta = dict((hw.extraction_json or {}).get("meta", {}))
+                meta["due_inferred_from"] = "grade"
+                hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
         s.flush()
         rec = _to_dict(hw)
     try:

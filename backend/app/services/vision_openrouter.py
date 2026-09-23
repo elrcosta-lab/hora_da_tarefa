@@ -12,7 +12,7 @@ from pathlib import Path
 from PIL import Image, ImageFile
 
 from app.core.config import Settings, get_settings
-from app.schemas.extraction import SUBJECTS, ExtractionResult
+from app.schemas.extraction import ExtractionResult
 
 # A1: teto de pixels contra decompression bomb (foto real de tarefa << 25MP)
 Image.MAX_IMAGE_PIXELS = 25_000_000
@@ -464,8 +464,10 @@ def extract_homework(
         )
 
     subject = data.get("subject")
-    if subject is not None and subject not in SUBJECTS:
-        subject = "Outro"
+    if subject is not None:
+        from app.services.textnorm import normalize_subject
+
+        subject, _ = normalize_subject(subject)
     confidence = float(data.get("confidence", 0.0))
     due_at = data.get("due_at")
 

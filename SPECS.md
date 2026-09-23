@@ -906,6 +906,17 @@ resp = client.chat.completions.create(
 | Tarefa repetida (sha256 igual) | reaproveita extração anterior, **não chama API** |
 | `AI_ENABLED=false` | pula IA, cria tarefa para preenchimento manual |
 
+### 5.5b Resolução da data de entrega (precedência)
+
+1. **Data do professor na foto** — `due_at` extraído (absoluto ou relativo a `now`).
+2. **Próxima aula da matéria** — sem data visível, `infer_due_from_grade` usa a
+   grade importada (match taxonômico insensível a acento/maiúsculas e a
+   "matéria + professor" grudados, ex. `MATEMATICA ELOISA` → `Matemática`;
+   genéricos `Aula`/`Outro` nunca casam): próxima ocorrência em 14 dias → 23:59,
+   sempre com `needs_review=true` (`meta.due_inferred_from=grade`).
+3. **Sem grade/match** — `due_at` null, horizonte +7d e revisão manual.
+   Sem data de envio explícita usa-se `now` (criação).
+
 ### 5.6 Config IA (`.env` — ver `.env.example`)
 
 ```
@@ -916,7 +927,7 @@ OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=https://horadatarefa.app
 OPENROUTER_APP_NAME=Hora da Tarefa
 OPENROUTER_TIMEOUT_SECONDS=60
-OPENROUTER_MAX_TOKENS=2048
+OPENROUTER_MAX_TOKENS=4096
 OPENROUTER_TEMPERATURE=0.1
 OPENROUTER_REASONING_EFFORT=low
 # Pipeline

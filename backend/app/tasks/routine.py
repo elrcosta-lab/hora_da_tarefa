@@ -102,6 +102,8 @@ def get_child(child_id: str) -> dict | None:
 
 
 def save_schedules(child_id: str, entries: list[dict], replace: bool = False) -> dict:
+    from app.services.textnorm import normalize_subject
+
     with session_scope() as s:
         if s.get(Child, child_id) is None:
             raise NotFound(child_id)
@@ -129,12 +131,23 @@ def save_schedules(child_id: str, entries: list[dict], replace: bool = False) ->
                     raise Overlap(f"Sobreposição em weekday={wd}")
             pool.append((p["weekday"], p["start_min"], p["end_min"]))
         created = 0
+        normalized_notes: list[str] = []
         for p in parsed:
+            if p["subject"].strip().lower() == "aula":
+                canonical, changed = "Aula", False
+            else:
+                canonical, changed = normalize_subject(p["subject"])
+                if changed:
+                    normalized_notes.append(f"'{p['subject']}' → '{canonical}'")
             s.add(SchoolSchedule(id=str(uuid.uuid4()), child_id=child_id, weekday=p["weekday"],
                                  start_time=p["raw_start"], end_time=p["raw_end"],
-                                 subject=p["subject"], kind=p["kind"]))
+                                 subject=canonical, kind=p["kind"]))
             created += 1
-        return {"child_id": child_id, "created": created, "replaced": bool(replace)}
+        s.flush()
+        out = {"child_id": child_id, "created": created, "replaced": bool(replace)}
+        if normalized_notes:
+            out["normalized"] = normalized_notes
+        return out
 
 
 def list_schedules(child_id: str) -> list[dict]:
