@@ -31,8 +31,11 @@ def run_polling(stop_event: threading.Event, token: str, max_iterations: int | N
         except _tg.TelegramError as exc:
             stats["errors"] += 1
             if "409" in str(exc) or "conflict" in str(exc).lower():
-                log.error("polling: webhook ativo em outro lugar, desligando loop")
-                break
+                # webhook (talvez em propagação de delete) — espera longo e tenta de novo,
+                # nunca desliga sozinho: o modo é escolhido por TELEGRAM_POLLING
+                log.warning("polling: conflito (webhook ativo?) — nova tentativa em 60s")
+                stop_event.wait(60)
+                continue
             log.warning("polling: %s (retry em %ss)", exc, backoff)
             stop_event.wait(backoff)
             backoff = min(backoff * 2, 30)

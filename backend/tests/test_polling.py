@@ -58,14 +58,30 @@ def test_polling_network_error_backoffs_and_continues(monkeypatch):
     assert calls["n"] == 2
 
 
-def test_polling_stops_on_webhook_conflict(monkeypatch):
+def test_polling_retries_on_webhook_conflict(monkeypatch):
     import app.bot.polling as P
     from app.bot import telegram_api as _tg
 
+    waits = []
+    calls = {"n": 0}
+
     def conflict(token, offset=None, timeout=20):
-        raise _tg.TelegramError("409 conflict: webhook ativo")
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise _tg.TelegramError("409 conflict: webhook ativo")
+        return [{"update_id": 601, "message": {"message_id": 1, "from": {"id": 606},
+                                               "chat": {"id": 606}, "text": "/hoje"}}]
+
+    class FakeEvent:
+        def is_set(self):
+            return False
+
+        def wait(self, s):
+            waits.append(s)
+            return False
 
     monkeypatch.setattr("app.bot.telegram_api.get_updates", conflict)
-    stop = threading.Event()
-    stats = P.run_polling(stop, "test-token", max_iterations=5)
-    assert stats["errors"] == 1
+    stats = P.run_polling(FakeEvent(), "123456:AA-fake", max_iterations=3)
+    assert stats["errors"] == 2
+    assert stats["updates"] == 1
+    assert waits == [60, 60]
