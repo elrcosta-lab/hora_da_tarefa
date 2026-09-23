@@ -48,6 +48,9 @@ def ensure_admin(email: str | None = None, password: str | None = None) -> dict:
             s.add(u)
         else:
             u.role = "admin"
+            if not u.password_hash:
+                # conta legada (ex.: criada pelo bot) sem senha: bootstrap inicial
+                u.password_hash = hash_password(password)
             u.updated_at = datetime.now(timezone.utc)
         s.flush()
         return _to_public(u)
