@@ -347,6 +347,22 @@ def test_past_due_rejected_and_inferred_from_grade():
     assert rec["extraction_json"]["meta"]["due_rejected"] == "2026-05-30"
 
 
+def test_overlapping_model_output_is_sanitized_not_rejected():
+    from app.tasks.routine import sanitize_imported_schedules
+
+    entries = [
+        {"weekday": 4, "start_time": "13:00", "end_time": "13:50", "subject": "Matemática", "kind": "aula"},
+        {"weekday": 4, "start_time": "13:00", "end_time": "13:50", "subject": "Matemática", "kind": "aula"},
+        {"weekday": 4, "start_time": "13:30", "end_time": "14:00", "subject": "Matemática", "kind": "aula"},
+        {"weekday": 4, "start_time": "15:00", "end_time": "15:50", "subject": "História", "kind": "aula"},
+    ]
+    clean, notes = sanitize_imported_schedules(entries)
+    assert len(clean) == 2
+    assert clean[0] == {"weekday": 4, "start_time": "13:00", "end_time": "14:00",
+                        "subject": "Matemática", "kind": "aula"}
+    assert any("duplicada" in n for n in notes) and any("fundidos" in n for n in notes)
+
+
 def test_import_forbidden_cross_account():
     c = _client()
     h, cid = _auth(c)

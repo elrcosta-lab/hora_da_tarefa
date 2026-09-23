@@ -263,6 +263,56 @@ def list_availability(child_id: str) -> list[dict]:
         return [_availability_to_dict(x) for x in rows]
 
 
+def _schedule_key(e: dict) -> tuple:
+    return (e.get("weekday"), e.get("start_time"), e.get("end_time"),
+            (e.get("subject") or "").strip().lower())
+
+
+def sanitize_imported_schedules(entries: list[dict]) -> tuple[list[dict], list[str]]:
+    """Limpa a saída do modelo antes de persistir: dedupe exato + fusão de
+    sobreposições do MESMO dia/matéria (ex.: 13:00–13:50 + 13:30–14:00).
+    Matérias diferentes em choque: mantém a primeira e avisa (revisão humana).
+    Retorna (entries, notes)."""
+    notes: list[str] = []
+    seen: set[tuple] = set()
+    deduped: list[dict] = []
+    for e in entries:
+        k = _schedule_key(e)
+        if k in seen:
+            notes.append(f"duplicada removida: dia {e.get('weekday')} {e.get('start_time')}–{e.get('end_time')}")
+            continue
+        seen.add(k)
+        deduped.append(e)
+
+    def _mins(hm: str) -> int:
+        h, m = hm.split(":")
+        return int(h) * 60 + int(m)
+
+    merged: list[dict] = []
+    for e in sorted(deduped, key=lambda x: (x.get("weekday", 0), x.get("start_time", ""))):
+        if merged and merged[-1].get("weekday") == e.get("weekday"):
+            last = merged[-1]
+            try:
+                overlap = _mins(e["start_time"]) < _mins(last["end_time"])
+            except (KeyError, ValueError):
+                overlap = False
+            if overlap:
+                if (last.get("subject") or "").strip().lower() == (e.get("subject") or "").strip().lower():
+                    if _mins(e["end_time"]) > _mins(last["end_time"]):
+                        last["end_time"] = e["end_time"]
+                    notes.append(f"blocos fundidos: {e.get('subject')} dia {e.get('weekday')}")
+                    continue
+                notes.append(f"choque mantido p/ revisão: {last.get('subject')} × {e.get('subject')} "
+                             f"dia {e.get('weekday')} {e.get('start_time')}")
+                # desloca o início para o fim do anterior em vez de falhar tudo
+                e = dict(e, start_time=last["end_time"])
+                if _mins(e["start_time"]) >= _mins(e["end_time"]):
+                    notes.append(f"bloco descartado (sem duração): {e.get('subject')} dia {e.get('weekday')}")
+                    continue
+        merged.append(e)
+    return merged, notes
+
+
 def clear_routine() -> None:
     """Apenas testes."""
     with session_scope() as s:

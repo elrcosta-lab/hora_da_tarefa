@@ -160,9 +160,8 @@ async def import_routine_view(
                     "A IA não entendeu. Tente de novo ou detalhe mais (dias e horas).",
                     422, details={"retryable": True})
     try:
-        sched = R.save_schedules(child_id,
-                                 [s.model_dump() for s in result.schedules],
-                                 replace=replace)
+        clean, notes = R.sanitize_imported_schedules([s.model_dump() for s in result.schedules])
+        sched = R.save_schedules(child_id, clean, replace=replace)
         acts = 0
         for a in result.activities:
             R.add_activity(child_id, a.model_dump())
@@ -174,7 +173,7 @@ async def import_routine_view(
         return _err("SCHEDULE_OVERLAP", str(exc), 409)
     except R.Validation as exc:
         return _err("VALIDATION_ERROR", str(exc), 400)
-    warnings = list(result.warnings) + sched.get("normalized", [])
+    warnings = list(result.warnings) + sched.get("normalized", []) + notes
     return {"child_id": child_id,
             "schedules_created": sched["created"],
             "activities_created": acts,

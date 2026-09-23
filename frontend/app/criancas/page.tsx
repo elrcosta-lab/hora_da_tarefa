@@ -101,7 +101,11 @@ export default function CriancasPage() {
       setMsg("Grade salva! ✅");
       await loadAgenda(childId);
     } catch (err) {
-      setMsg(err instanceof Error ? err.message : "Falha ao salvar grade.");
+      if (err instanceof ApiError && err.code === "SCHEDULE_OVERLAP") {
+        setMsg("A IA trouxe horários sobrepostos com a grade atual. Marque “Substituir atual” ou ajuste manualmente.");
+      } else {
+        setMsg(err instanceof Error ? err.message : "Falha ao importar.");
+      }
     } finally {
       setBusy(false);
     }
