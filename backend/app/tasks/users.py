@@ -53,9 +53,9 @@ def register(name: str, email: str, password: str, lgpd_consent: bool = False,
             raise EmailTaken(email)
         u = AppUser(id=str(uuid.uuid4()), name=name.strip(), email=email,
                     password_hash=hash_password(password),
-                    telegram_link_code=_new_code(s),
                     lgpd_consent_at=datetime.now(timezone.utc),
                     lgpd_consent_version=lgpd_version or "termos-v1")
+        _stamp_code(u, s)
         s.add(u)
         s.flush()
         return _to_dict(u)
@@ -73,6 +73,9 @@ def authenticate(email: str, password: str) -> dict | None:
         return _to_dict(u)
 
 
+LINK_TTL_MINUTES = 15
+
+
 def _new_code(s, length: int = 6) -> str:
     for _ in range(20):
         code = "".join(secrets.choice("0123456789") for _ in range(length))
@@ -81,12 +84,20 @@ def _new_code(s, length: int = 6) -> str:
     raise RuntimeError("não foi possível gerar link_code único")
 
 
+def _stamp_code(u, s) -> None:
+    from datetime import timedelta
+
+    u.telegram_link_code = _new_code(s)
+    u.link_expires_at = datetime.now(timezone.utc) + timedelta(minutes=LINK_TTL_MINUTES)
+    u.updated_at = datetime.now(timezone.utc)
+
+
 def create_user(name: str) -> dict:
     if not (name or "").strip():
         raise ValueError("name é obrigatório")
     with session_scope() as s:
-        u = AppUser(id=str(uuid.uuid4()), name=name.strip(),
-                    telegram_link_code=_new_code(s))
+        u = AppUser(id=str(uuid.uuid4()), name=name.strip())
+        _stamp_code(u, s)
         s.add(u)
         s.flush()
         return _to_dict(u)
@@ -97,8 +108,7 @@ def generate_link_code(user_id: str) -> dict:
         u = s.get(AppUser, user_id)
         if u is None:
             raise NotFound(user_id)
-        u.telegram_link_code = _new_code(s)
-        u.updated_at = datetime.now(timezone.utc)
+        _stamp_code(u, s)
         s.flush()
         return _to_dict(u)
 
@@ -110,7 +120,7 @@ def get_by_telegram_id(telegram_user_id: int) -> dict | None:
 
 
 def link_telegram(code: str, telegram_user_id: int) -> dict | None:
-    """Consome o código (single-use) e vincula o chat. Retorna None se inválido."""
+    """Consome o código (single-use, 15 min) e vincula o chat. Retorna None se inválido/expirado."""
     code = (code or "").strip()
     if not code:
         return None
@@ -118,8 +128,18 @@ def link_telegram(code: str, telegram_user_id: int) -> dict | None:
         u = s.query(AppUser).filter_by(telegram_link_code=code).one_or_none()
         if u is None:
             return None
+        exp = u.link_expires_at
+        if exp is not None:
+            if exp.tzinfo is None:
+                exp = exp.replace(tzinfo=timezone.utc)
+            if exp <= datetime.now(timezone.utc):
+                u.telegram_link_code = None
+                u.link_expires_at = None
+                s.flush()
+                return None
         u.telegram_user_id = int(telegram_user_id)
         u.telegram_link_code = None
+        u.link_expires_at = None
         u.updated_at = datetime.now(timezone.utc)
         s.flush()
         return _to_dict(u)

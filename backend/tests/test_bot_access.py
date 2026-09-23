@@ -134,3 +134,22 @@ def test_link_endpoint_regenerates_code():
     r = c.post("/v1/auth/telegram/link", json={"user_id": first["user_id"]}, headers=h_owner)
     assert r.status_code == 200
     assert r.json()["link_code"] != first["link_code"]
+
+
+def test_expired_code_rejected():
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.db import session_scope
+    from app.models import AppUser
+    from app.tasks import users as U
+
+    c = _client()
+    h_owner, first = _link_code_for(c)
+    with session_scope() as s:
+        u = s.get(AppUser, first["user_id"])
+        u.link_expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+    assert U.link_telegram(first["link_code"], 778) is None
+    # código fresco vincula normalmente
+    code = c.post("/v1/auth/telegram/link", json={"user_id": first["user_id"]},
+                  headers=h_owner).json()["link_code"]
+    assert U.link_telegram(code, 778) is not None

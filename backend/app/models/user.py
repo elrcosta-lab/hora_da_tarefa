@@ -22,6 +22,7 @@ class AppUser(Base):
     password_hash: Mapped[str | None] = mapped_column(Text, nullable=True)
     telegram_user_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True, unique=True)
     telegram_link_code: Mapped[str | None] = mapped_column(Text, nullable=True, index=True)
+    link_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lgpd_consent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lgpd_consent_version: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
