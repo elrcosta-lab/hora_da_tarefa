@@ -256,6 +256,27 @@ def test_extraction_without_date_uses_grade_inference():
     assert rec["extraction_json"]["meta"]["due_inferred_from"] == "grade"
 
 
+def test_explicit_nulls_fall_back_to_defaults():
+    import json
+    from unittest.mock import MagicMock, patch
+
+    from app.services.vision_openrouter import extract_routine
+
+    payload = json.dumps({
+        "schedules": [], "activities": [{"title": "Natação", "weekday": 2,
+                                         "start_time": "17:00", "end_time": "18:00",
+                                         "recurrence": None, "travel_before_min": None,
+                                         "travel_after_min": None, "is_blocking": None}],
+        "availability": [], "confidence": 0.8, "needs_review": False, "warnings": [],
+    })
+    fake = MagicMock(choices=[MagicMock(message=MagicMock(content=payload))],
+                     usage=MagicMock(prompt_tokens=1, completion_tokens=1))
+    with patch("app.services.vision_openrouter._chat_json", return_value=fake):
+        r = extract_routine(text="natação qua")
+    a = r.activities[0]
+    assert (a.recurrence, a.travel_before_min, a.travel_after_min, a.is_blocking) == ("weekly", 0, 0, True)
+
+
 def test_import_forbidden_cross_account():
     c = _client()
     h, cid = _auth(c)

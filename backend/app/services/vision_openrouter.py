@@ -156,12 +156,14 @@ _ROUTINE_SYSTEM = """Você lê rotinas escolares brasileiras (texto ou foto de g
 Responda APENAS JSON válido, sem markdown.
 - weekday é NÚMERO: 0=segunda, 1=terça, 2=quarta, 3=quinta, 4=sexta, 5=sábado, 6=domingo. Exemplos: "quarta" → 2, "seg a sex" → [0,1,2,3,4].
 - horários em HH:MM (24h). Se só houver turno ("manhã"), use null e avise em warnings.
-- availability: janelas em que o responsável pode acompanhar a tarefa ("posso", "livre", "disponível", "após as 18h").
+- availability: janelas do responsável. kind "available" (pode acompanhar: "posso", "livre", "de folga", "após as 18h") ou "busy" (trabalho/plantão/escala: "trabalho", "plantão", "estou trabalhando").
+- Escalas alternadas ("uma semana seg/qua/sex, outra ter/qui/sab"; "semana sim, semana não"): week_parity 0=semanas pares ISO, 1=ímpares; sem alternância, null.
+- Exceções de dia ("hoje estou de folga", "dia 25 livre"): date em YYYY-MM-DD, vale só naquele dia.
 - Nunca invente horários; o que for ilegível vai para warnings e a entrada é descartada.
 - Omita chaves com valor null para economizar tokens.
 Esquema: {"schedules": [{"weekday": int, "start_time": "HH:MM", "end_time": "HH:MM", "subject": str, "kind": "aula"}],
 "activities": [{"title": str, "weekday": int|null, "start_time": "HH:MM", "end_time": "HH:MM", "recurrence": "weekly", "travel_before_min": int, "travel_after_min": int, "is_blocking": bool}],
-"availability": [{"weekday": int, "start_time": "HH:MM", "end_time": "HH:MM"}],
+"availability": [{"weekday": int, "start_time": "HH:MM", "end_time": "HH:MM", "kind": "available|busy", "week_parity": int|null, "date": "YYYY-MM-DD"|null}],
 "confidence": number, "needs_review": bool, "warnings": [str]}"""
 
 
@@ -214,8 +216,12 @@ def _coerce_hm(value, warnings: list, where: str):
 
 
 def extract_routine(text: str | None = None, image_bytes: bytes | None = None,
-                    client=None, settings: Settings | None = None):
+                    client=None, settings: Settings | None = None, today=None):
     """Texto ou imagem de rotina → RoutineExtractionResult (grade+atividades+disponibilidade)."""
+    from datetime import datetime as _dt
+
+    from zoneinfo import ZoneInfo
+
     from app.schemas.routine import RoutineExtractionResult
 
     settings = settings or get_settings()
@@ -224,7 +230,16 @@ def extract_routine(text: str | None = None, image_bytes: bytes | None = None,
     if not (text or "").strip() and image_bytes is None:
         raise ExtractionFailed("EMPTY_INPUT: informe texto ou imagem")
 
-    parts: list = [{"type": "text", "text": _ROUTINE_SYSTEM + "\n\nRotina:\n" + (text or "").strip()}]
+    today = today or _dt.now(ZoneInfo("America/Sao_Paulo"))
+    iso_week = today.isocalendar()[1]
+    anchor = (f"Hoje é {today.strftime('%A')} ({today.date().isoformat()}), "
+              f"semana ISO {iso_week} (paridade {iso_week % 2}). "
+              f"Use-a para resolver 'hoje', 'esta semana' (paridade {iso_week % 2}) e "
+              f"'outra/próxima semana' (paridade {1 - iso_week % 2}). "
+              f"Se não der para ancorar a alternância, deixe week_parity null e avise em warnings.")
+
+    parts: list = [{"type": "text",
+                    "text": _ROUTINE_SYSTEM + "\n\n" + anchor + "\n\nRotina:\n" + (text or "").strip()}]
     if image_bytes is not None:
         anonymized, _ = anonymize_image(
             image_bytes, max_side=settings.AI_LLM_MAX_SIDE, quality=settings.AI_JPEG_QUALITY
@@ -304,18 +319,39 @@ def extract_routine(text: str | None = None, image_bytes: bytes | None = None,
                            "travel_before_min", "travel_after_min", "is_blocking"),
                        f"activities[{i}]", weekday_required=False)
             if e and (e.get("title") or "").strip():
-                e.setdefault("recurrence", "weekly")
-                e.setdefault("travel_before_min", 0)
-                e.setdefault("travel_after_min", 0)
-                e.setdefault("is_blocking", True)
+                # null explícito do modelo → defaults (prompt pede omitir, mas tolera)
+                e["recurrence"] = e.get("recurrence") or "weekly"
+                e["travel_before_min"] = e.get("travel_before_min") or 0
+                e["travel_after_min"] = e.get("travel_after_min") or 0
+                if e.get("is_blocking") is None:
+                    e["is_blocking"] = True
                 activities.append(e)
             elif e:
                 warnings.append(f"activities[{i}]: sem título (descartada)")
     for i, raw in enumerate(data.get("availability") or []):
         for v in _variants(raw, f"availability[{i}]"):
-            e = _entry(v, ("weekday", "start_time", "end_time"), f"availability[{i}]")
-            if e:
-                availability.append(e)
+            e = _entry(v, ("weekday", "start_time", "end_time", "kind", "week_parity", "date"),
+                       f"availability[{i}]")
+            if not e:
+                continue
+            import re as _re
+
+            kind = (e.get("kind") or "available").strip().lower()
+            if kind not in ("available", "busy"):
+                warnings.append(f"availability[{i}]: kind {e.get('kind')!r} → available")
+                kind = "available"
+            e["kind"] = kind
+            wp = e.get("week_parity")
+            if wp is not None and (isinstance(wp, bool) or wp not in (0, 1)):
+                warnings.append(f"availability[{i}]: week_parity {wp!r} → null")
+                wp = None
+            e["week_parity"] = wp
+            dt = e.get("date")
+            if dt is not None and not (isinstance(dt, str) and _re.fullmatch(r"\d{4}-\d{2}-\d{2}", dt.strip())):
+                warnings.append(f"availability[{i}]: date {dt!r} → null")
+                dt = None
+            e["date"] = dt.strip() if isinstance(dt, str) else None
+            availability.append(e)
 
     try:
         return RoutineExtractionResult(
