@@ -79,7 +79,10 @@ def delete_user(user_id: str) -> dict:
         hw_ids = [h.id for h in s.query(Homework).filter(
             Homework.child_id.in_(child_ids)).all()] if child_ids else []
         counts = {"children": len(child_ids), "homeworks": len(hw_ids)}
+        storage_keys: list[str] = []
         if hw_ids:
+            storage_keys = [r[0] for r in s.query(HomeworkImage.storage_key).filter(
+                HomeworkImage.homework_id.in_(hw_ids)).all()]
             counts["images"] = s.query(HomeworkImage).filter(
                 HomeworkImage.homework_id.in_(hw_ids)).delete(synchronize_session=False)
             counts["suggestions"] = s.query(SuggestionSlot).filter(
@@ -95,7 +98,19 @@ def delete_user(user_id: str) -> dict:
             s.query(Child).filter(Child.id.in_(child_ids)).delete(synchronize_session=False)
         s.query(RefreshToken).filter_by(user_id=user_id).delete(synchronize_session=False)
         s.delete(u)
-        return {"user_id": user_id, **counts}
+    # fora da transação: remove bytes (falha aqui não desfaz o delete lógico)
+    from app.core.storage import get_storage
+
+    purged = 0
+    storage = get_storage()
+    for key in storage_keys:
+        try:
+            storage.delete(key)
+            purged += 1
+        except Exception:
+            continue
+    counts["bytes_purged"] = purged
+    return {"user_id": user_id, **counts}
 
 
 def admin_reset_password(user_id: str, new_password: str) -> dict:

@@ -71,13 +71,42 @@ def test_admin_lists_users_and_common_forbidden():
 
 
 def test_admin_deletes_user_with_cascade_and_not_self():
+    import io
+    import uuid
+
+    from PIL import Image
+    from unittest.mock import patch
+
+    from app.schemas.extraction import ExtractionResult
+
     c = _client()
     ha, admin_id = _admin_headers(c)
     h, uid = make_auth(c, name="Alvo")
     cid = c.post("/v1/children", json={"name": "Filho"}, headers=h).json()["id"]
+    ok = ExtractionResult(is_homework=True, subject="Mat", title="T", statement="S",
+                          due_at="2026-09-25", estimated_minutes=30, priority=1,
+                          confidence=0.9, needs_review=False, extraction_status="ok", meta={})
+    img = Image.new("RGB", (800, 600), (1, 2, 3))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    with patch("app.services.vision_openrouter.extract_homework", return_value=ok):
+        hid = c.post("/v1/homeworks/upload",
+                     files={"file": (f"{uuid.uuid4()}.jpg", buf.getvalue(), "image/jpeg")},
+                     data={"child_id": cid}, headers=h).json()["homework_id"]
+    from app.core.db import session_scope
+    from app.core.storage import get_storage
+    from app.models import HomeworkImage
+
+    with session_scope() as s:
+        key = s.query(HomeworkImage).filter_by(homework_id=hid).one().storage_key
     r = c.delete(f"/v1/admin/users/{uid}", headers=ha)
     assert r.status_code == 200, r.text
     assert r.json()["deleted"]["children"] == 1
+    assert r.json()["deleted"]["bytes_purged"] == 1
+    with session_scope() as s:
+        assert s.query(HomeworkImage).filter_by(homework_id=hid).count() == 0
+    with __import__("pytest").raises(KeyError):
+        get_storage().get(key)
     from app.tasks import routine as R
     from app.tasks import users as U
 
