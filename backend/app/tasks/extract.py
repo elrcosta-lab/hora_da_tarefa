@@ -105,35 +105,57 @@ def list_homeworks(child_id: str | None = None, owner_user_id: str | None = None
                    status: list[str] | None = None, subject: str | None = None,
                    due_before: str | None = None, due_after: str | None = None,
                    q: str | None = None, sort: str = "created_at") -> list[dict]:
-    """Lista com filtros combinados (RF-12). due_* aceitam YYYY-MM-DD ou ISO; q busca em title/statement."""
+    """Lista com filtros combinados (RF-12). due_* aceitam YYYY-MM-DD ou ISO; q busca em title/statement.
+
+    A2: filtros no SQL (antes era full scan + filtro em Python).
+    """
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+    from zoneinfo import ZoneInfo
+
+    from sqlalchemy import func, or_
+
     from app.models import Child
 
+    SP = ZoneInfo("America/Sao_Paulo")
+
+    def _day_start(day_str: str) -> _dt:
+        return _dt(int(day_str[0:4]), int(day_str[5:7]), int(day_str[8:10]),
+                   tzinfo=SP)
+
     with session_scope() as s:
-        query = s.query(Homework).order_by(Homework.created_at)
+        query = s.query(Homework)
         if child_id:
             query = query.filter_by(child_id=child_id)
         if owner_user_id is not None:
             query = query.join(Child, Child.id == Homework.child_id).filter(
                 Child.owner_user_id == owner_user_id)
+        if status:
+            wanted = [t.strip() for t in status] if isinstance(status, (list, tuple, set)) else [status]
+            query = query.filter(Homework.status.in_(wanted))
+        if subject:
+            query = query.filter(func.lower(Homework.subject) == subject.lower())
+        if due_before:
+            # dia local (SP) estritamente anterior — equivale ao [:10] anterior
+            query = query.filter(Homework.due_at.is_not(None),
+                                 Homework.due_at < _day_start(due_before[:10]))
+        if due_after:
+            query = query.filter(Homework.due_at.is_not(None),
+                                 Homework.due_at >= _day_start(due_after[:10]) + _td(days=1))
+        if q:
+            needle = f"%{q.lower()}%"
+            query = query.filter(or_(func.lower(Homework.title).like(needle),
+                                     func.lower(Homework.statement).like(needle)))
+        reverse = sort.startswith("-")
+        key = sort.lstrip("-")
+        if key == "due_at":
+            order = Homework.due_at.desc() if reverse else Homework.due_at.asc()
+            # nulos por último no asc (equivale ao "9999"), por primeiro no desc
+            order = order.nullsfirst() if reverse else order.nullslast()
+            query = query.order_by(order, Homework.id)
+        else:
+            query = query.order_by(Homework.created_at)
         items = [_to_dict(hw) for hw in query.all()]
-
-    if status:
-        wanted = {t.strip() for t in status} if isinstance(status, (list, tuple, set)) else {status}
-        items = [r for r in items if r.get("status") in wanted]
-    if subject:
-        items = [r for r in items if (r.get("subject") or "").lower() == subject.lower()]
-    if due_before:
-        items = [r for r in items if r.get("due_at") and r["due_at"][:10] < due_before[:10]]
-    if due_after:
-        items = [r for r in items if r.get("due_at") and r["due_at"][:10] > due_after[:10]]
-    if q:
-        needle = q.lower()
-        items = [r for r in items
-                 if needle in (r.get("title") or "").lower() or needle in (r.get("statement") or "").lower()]
-    reverse = sort.startswith("-")
-    key = sort.lstrip("-")
-    if key == "due_at":
-        items.sort(key=lambda r: (r.get("due_at") or "9999", r["homework_id"]), reverse=reverse)
     return items
 
 

@@ -95,6 +95,34 @@ def test_filters_combine_status_subject_q_period_sort():
     assert dues == sorted(dues, reverse=True)
 
 
+def test_filters_push_to_sql_not_full_scan():
+    """A2: com filtros, o banco retorna só o pedido (sem full scan em Python)."""
+    from unittest.mock import patch
+
+    from sqlalchemy.orm import Query
+
+    from app.main import app
+
+    client = TestClient(app)
+    h, cid = _setup(client)
+    seen = {}
+
+    orig_all = Query.all
+
+    def spy_all(self):
+        seen["compiled"] = str(self)
+        return orig_all(self)
+
+    with patch.object(Query, "all", spy_all):
+        r = client.get("/v1/homeworks", params={"child_id": cid, "status": "pendente",
+                                                "subject": "Matemática", "q": "fra"},
+                       headers=h)
+    assert r.status_code == 200
+    compiled = seen["compiled"].upper()
+    assert "WHERE" in compiled
+    assert "LIKE" in compiled
+
+
 def test_today_aggregates_due_overdue_scheduled():
     from app.main import app
 
