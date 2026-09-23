@@ -60,6 +60,7 @@ services:
       redis:
         condition: service_healthy
     environment:
+      ENV: ${ENV:-dev}
       DATABASE_URL: postgresql+psycopg://hora:${POSTGRES_PASSWORD:-hora}@postgres:5432/hora_da_tarefa
       REDIS_URL: redis://redis:6379/0
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET ausente no .env}

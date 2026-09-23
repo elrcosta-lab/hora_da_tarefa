@@ -37,7 +37,10 @@ async def lifespan(app: FastAPI):
         pass
 
 
-app = FastAPI(title="Hora da Tarefa", version="1.1.0", lifespan=lifespan)
+app = FastAPI(title="Hora da Tarefa", version="1.1.0", lifespan=lifespan,
+              # A6: mapa da API só fora de prod
+              docs_url=None if os.environ.get("ENV") == "prod" else "/docs",
+              redoc_url=None if os.environ.get("ENV") == "prod" else "/redoc")
 
 # A1: atrás do Caddy, o IP real vem em X-Forwarded-For — sem isso, todos os
 # rate limits por IP compartilham a mesma chave (anti-brute-force fictício).

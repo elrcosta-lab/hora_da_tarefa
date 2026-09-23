@@ -63,6 +63,8 @@ def _to_dict(hw: Homework) -> dict:
 def get_or_create_homework(image_bytes: bytes, child_id: str, hint_text: str | None = None,
                            created_by_user_id: str | None = None) -> tuple[dict, bool]:
     """Retorna (registro, deduplicated). Registro mínimo p/ 202 imediato; extração roda em background."""
+    # A5: hint vai para o JSONB — teto de 500 chars contra amplificação de armazenamento
+    hint_text = hint_text.strip()[:500] if hint_text and hint_text.strip() else None
     sha = sha256_bytes(image_bytes)
     mime = detect_mime(image_bytes) or "application/octet-stream"
     storage = get_storage()
