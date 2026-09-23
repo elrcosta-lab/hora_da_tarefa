@@ -114,6 +114,19 @@ def test_code_is_single_use():
     assert "vinculad" not in (last_sent(503) or "").lower()
 
 
+def test_link_status_endpoint_reflects_link():
+    c = _client()
+    h, data = _link_code_for(c)
+    r = c.get("/v1/auth/telegram/status", headers=h)
+    assert r.status_code == 200
+    assert r.json() == {"linked": False, "telegram_user_id": None}
+    from app.tasks import users as U
+
+    assert U.link_telegram(data["link_code"], 777) is not None
+    r = c.get("/v1/auth/telegram/status", headers=h)
+    assert r.json() == {"linked": True, "telegram_user_id": 777}
+
+
 def test_link_endpoint_regenerates_code():
     c = _client()
 

@@ -88,3 +88,13 @@ def link_view(payload: LinkIn, current_user_id: str = Depends(get_current_user_i
     except ValueError as exc:
         return _err("VALIDATION_ERROR", str(exc), 400)
     return _err("VALIDATION_ERROR", "Informe name (novo usuário) ou user_id (regenerar código).", 400)
+
+
+@router.get("/telegram/status", status_code=200)
+def link_status_view(current_user_id: str = Depends(get_current_user_id)):
+    """O onboarding faz polling aqui para mostrar 'vinculado ✅' sem sair da página."""
+    user = U.get_user(current_user_id)
+    if user is None:
+        return _err("USER_NOT_FOUND", "Usuário não encontrado.", 404)
+    return {"linked": user.get("telegram_user_id") is not None,
+            "telegram_user_id": user.get("telegram_user_id")}

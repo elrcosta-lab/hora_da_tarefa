@@ -12,12 +12,29 @@ export default function OnboardingPage() {
   const [grade, setGrade] = useState("5º ano");
   const [rows, setRows] = useState([{ weekday: 0, start: "07:30", end: "12:00", subject: "Aula" }]);
   const [code, setCode] = useState<string | null>(null);
+  const [linked, setLinked] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     if (!getAccess()) router.push("/login");
   }, [router]);
+
+  // polling do vínculo: mostra confirmação na plataforma assim que o bot vincula
+  useEffect(() => {
+    if (step !== 3 || linked) return;
+    let alive = true;
+    const id = setInterval(async () => {
+      try {
+        const s = await api<{ linked: boolean }>("/auth/telegram/status");
+        if (alive && s.linked) {
+          setLinked(true);
+          setMsg("Conta vinculada com sucesso! ✅");
+        }
+      } catch { /* tenta de novo no próximo ciclo */ }
+    }, 3000);
+    return () => { alive = false; clearInterval(id); };
+  }, [step, linked]);
 
   async function step1(e: React.FormEvent) {
     e.preventDefault();
@@ -151,6 +168,12 @@ export default function OnboardingPage() {
             ) : (
               <div style={{ padding: 16, background: "#f1f5f9", borderRadius: 8, textAlign: "center", marginBottom: 12 }}>
                 <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: 8 }}>{code}</div>
+              </div>
+            )}
+            {linked && (
+              <div className="card" role="status" style={{ borderLeft: "4px solid var(--secondary)", marginBottom: 12 }}>
+                <strong>Telegram conectado! ✅</strong>
+                <p className="muted" style={{ margin: "4px 0 0" }}>O bot confirmou seu cadastro. Pode começar.</p>
               </div>
             )}
             <button className="btn-primary" style={{ width: "100%" }} onClick={() => router.push("/")}>
