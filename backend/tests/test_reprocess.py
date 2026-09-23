@@ -60,6 +60,13 @@ def test_reprocess_endpoint_reruns_extraction():
 
     assert get_homework(hid)["extraction_status"] == "processando"
 
+    # A2: reprocess com teto igual ao upload (5/min) — sem loop drenando IA paga
+    for _ in range(5):
+        assert client.post(f"/v1/homeworks/{hid}/reprocess", headers=h).status_code == 202
+    r6 = client.post(f"/v1/homeworks/{hid}/reprocess", headers=h)
+    assert r6.status_code == 429
+    assert r6.json()["error"]["code"] == "RATE_LIMITED"
+
     with patch("app.services.vision_openrouter.extract_homework", return_value=_ok_result()):
         r = client.post(f"/v1/homeworks/{hid}/reprocess", headers=h)
         assert r.status_code == 202, r.text
