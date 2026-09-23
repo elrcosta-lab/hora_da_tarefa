@@ -2,7 +2,7 @@
 
 > Documento de Especificação Técnica (Spec-Driven Development).
 > Autor: subagente SPEC + OpenCode · Versão: 1.1 (OpenRouter) · Status: **Rascunho para revisão**
-> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini:free`).
+> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini`).
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
 
 ---
@@ -50,7 +50,7 @@
 | Storage | **MinIO (S3-compatible) em volume Docker** | diretório em volume + abstração S3 | Mesma API S3 permite migrar para provedor externo sem trocar código. |
 | Bot Telegram | **aiogram 3 (Python)** | grammY/Telegraf (Node) | aiogram no mesmo runtime do backend; webhook + FSM + idempotência. |
 | OCR | **Nenhum no caminho crítico** (Nex-N2.5-Mini lê imagem direto) | Tesseract 5 como enriquecimento futuro opcional | Removido para simplificar; reavaliar pós-MVP se manuscrito exigir |
-| VLM (extração) | **OpenRouter `nex-agi/nex-n2.5-mini:free` via `openai` SDK (`base_url=https://openrouter.ai/api/v1`)** | `nex-agi/nex-n2.5-mini` (pago) para SLA maior | MoE multimodal 35B/3B ativos, 262k contexto, structured output, custo zero |
+| VLM (extração) | **OpenRouter `nex-agi/nex-n2.5-mini` via `openai` SDK (`base_url=https://openrouter.ai/api/v1`)** | `nex-agi/nex-n2.5-mini` (pago) para SLA maior | MoE multimodal 35B/3B ativos, 262k contexto, structured output, microcusto (US$ 0,025/0,10 por 1M tokens) |
 | LLM fallback texto | **O mesmo Nex-N2.5-Mini (só-texto, sem imagem)** | — | Sem Llama/Qwen local; retry usa o mesmo modelo com `temperature=0.1` |
 | Runtime IA | **HTTP client + Pillow (resize/strip EXIF)** | — | Sem Ollama/llama.cpp; worker leve |
 | Reverse proxy/TLS | **Caddy** (TLS automático) | Nginx + certbot | Menos config na VPS. |
@@ -59,7 +59,7 @@
 
 ### 0.3 Orçamento de recursos (1 vCPU / 4 GB / 50 GB — sem IA local)
 
-> **Sem VLM/Ollama na VPS.** Worker de IA é só HTTP + Pillow. Gargalo passa a ser rate limit do tier free, não RAM.
+> **Sem VLM/Ollama na VPS.** Worker de IA é só HTTP + Pillow. Gargalo passa a ser rate limit do tier pago, não RAM.
 
 | Serviço | RAM alvo (limit) | CPU | Observação |
 |---|---|---|---|
@@ -72,7 +72,7 @@
 | minio | 256 MB | 0.2 | |
 | **Total simultâneo (pico)** | **≈1.9 GB** | ~1.6 vCPU | folga confortável em 4 GB; sem swap/OOM de IA. |
 
-**Mitigações de rate limit (tier free):** backoff exponencial 1/5/30 min (3 retries), cache/dedupe por `sha256` (nunca reprocessa mesma foto), `AI_WORKER_CONCURRENCY` configurável, upgrade para `nex-agi/nex-n2.5-mini` pago só trocando `OPENROUTER_MODEL`.
+**Mitigações de rate limit (tier pago):** backoff exponencial 1/5/30 min (3 retries), cache/dedupe por `sha256` (nunca reprocessa mesma foto), `AI_WORKER_CONCURRENCY` configurável, upgrade para `nex-agi/nex-n2.5-mini` pago só trocando `OPENROUTER_MODEL`.
 
 ### 0.4 Estrutura de repositório sugerida
 
@@ -113,7 +113,7 @@ flowchart LR
   API --> Q[(Redis / Celery)]
   Q --> WA[worker-default: agenda + notifica]
   Q --> WAI[worker-ai leve: anonimiza + OpenRouter]
-  WAI --> OR[OpenRouter nex-n2.5-mini:free]
+  WAI --> OR[OpenRouter nex-n2.5-mini]
   WAI --> S3
   WAI --> PG
   WA --> BOT
@@ -130,13 +130,13 @@ flowchart LR
 | `scheduler` (beat) | `APScheduler` no lifespan da API: tick 1/min (`run_beat_tick` = `mark_overdue` + `dispatch_due` com sender Telegram quando `TELEGRAM_LIVE_SEND`) + purge de imagens 1x/dia; `BEAT_ENABLED=false` desliga | - |
 | `bot` (aiogram) | Recebe update do Telegram, valida usuário, chama API interna | Não acessa DB diretamente (usa API) |
 | `minio` | Guarda imagens originais e derivadas | - |
-| `openrouter` (externo) | Inferência multimodal imagem→JSON (`nex-agi/nex-n2.5-mini:free`) | Não guarda estado; rate limited no free |
+| `openrouter` (externo) | Inferência multimodal imagem→JSON (`nex-agi/nex-n2.5-mini`) | Não guarda estado; rate limited no free |
 
 ### 1.3 Fluxo principal (happy path)
 
 1. Pai envia foto no Telegram → bot baixa arquivo e chama `POST /homeworks/upload` (multipart) com `child_id` opcional.
 2. API anonimiza (resize ≤1600px, strip EXIF, SHA-256), grava `homework` (status `pendente`), salva imagem em `homework_image`, publica job `extract_homework` na fila `ai` (dedupe por `sha256`: hash repetido reaproveita `extraction_json` sem chamar API).
-3. `worker-ai` chama OpenRouter `nex-agi/nex-n2.5-mini:free` (imagem base64 + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança) → publica `compute_suggestions`.
+3. `worker-ai` chama OpenRouter `nex-agi/nex-n2.5-mini` (imagem base64 + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança) → publica `compute_suggestions`.
 4. `worker-default` roda motor de agendamento → grava `suggestion_slot` → publica `notify` (sugestão inicial).
 5. Bot envia mensagem com sugestão e botões (`Agendar` / `Outra` / `Não é tarefa`).
 6. Beat agenda lembretes 24h/2h em `notification_log` (status `scheduled`) e dispara quando vence.
@@ -556,7 +556,7 @@ Cria atividade extra.
 ### 3.7b `POST /children/:id/routine/import` (inferência de rotina)
 
 Importa grade + atividades + disponibilidade do responsável a partir de texto
-e/ou foto (bilhete, grade impressa, mensagem), via `nex-agi/nex-n2.5-mini:free`.
+e/ou foto (bilhete, grade impressa, mensagem), via `nex-agi/nex-n2.5-mini`.
 
 **Request** `multipart/form-data`: `text` (opcional), `file` (opcional, jpeg/png/webp ≤10MB),
 `replace` (default `false`; `true` substitui grade e disponibilidade).
@@ -780,7 +780,7 @@ flowchart LR
   A[Upload imagem] --> B[Anonimização local: resize 1600px + strip EXIF + SHA-256]
   B --> C{Hash já processado?}
   C -- sim --> K[Reaproveita extraction_json]
-  C -- não --> E[OpenRouter nex-n2.5-mini:free image->JSON]
+  C -- não --> E[OpenRouter nex-n2.5-mini image->JSON]
   E --> G[Validação Pydantic + normalização]
   G --> H{confiança >= threshold?}
   H -- sim --> I[homework extraido]
@@ -800,9 +800,9 @@ flowchart LR
 - Hash repetido → reaproveita `extraction_json` anterior, **não chama API**.
 - **Timeout:** 10 s nesta etapa.
 
-**E2. Chamada OpenRouter** — `nex-agi/nex-n2.5-mini:free`
+**E2. Chamada OpenRouter** — `nex-agi/nex-n2.5-mini`
 - `POST https://openrouter.ai/api/v1/chat/completions`, SDK `openai` Python com `base_url="https://openrouter.ai/api/v1"`, `api_key=$OPENROUTER_API_KEY`.
-- Payload: `model="nex-agi/nex-n2.5-mini:free"`, `messages=[{role:"user", content:[{type:"text", text:SYSTEM+hint},{type:"image_url", image_url:{url:"data:image/jpeg;base64,..."}}]}]`, `response_format={"type":"json_object"}`, `temperature=0.1`, `max_tokens=2048`.
+- Payload: `model="nex-agi/nex-n2.5-mini"`, `messages=[{role:"user", content:[{type:"text", text:SYSTEM+hint},{type:"image_url", image_url:{url:"data:image/jpeg;base64,..."}}]}]`, `response_format={"type":"json_object"}`, `temperature=0.1`, `max_tokens=2048`.
 - Headers: `Authorization: Bearer …`, `HTTP-Referer: $OPENROUTER_SITE_URL`, `X-Title: $OPENROUTER_APP_NAME`.
 - Decodificação forçada de JSON (parse + retry único em modo só-texto com o mesmo modelo se 1ª resposta vier com markdown).
 - **Timeout:** 60 s + retry 1× imediato; 429/5xx → backoff Celery 1/5/30 min (máx. 3 tentativas).
@@ -814,7 +814,7 @@ flowchart LR
 - `confidence` vem do modelo (0–1); `needs_review` = `confidence<0.75` ou críticos nulos.
 - `is_homework=false` com conf ≥0.8 → descarta com aviso.
 
-**E4. Persistência e evento** — grava `homework.extraction_json` (+ `meta.engine="nex-agi/nex-n2.5-mini:free"`, `tokens`, `latency_ms`, `image_sha256`), `extraction_status`, publica `compute_suggestions`.
+**E4. Persistência e evento** — grava `homework.extraction_json` (+ `meta.engine="nex-agi/nex-n2.5-mini"`, `tokens`, `latency_ms`, `image_sha256`), `extraction_status`, publica `compute_suggestions`.
 
 **E5. Falha/rate limit** — se 3 retries falharem (429 persistente, timeout, OOM remoto) → `extraction_status='falhou'` + orienta entrada manual. `AI_ENABLED=false` desliga IA e opera só manual. Sem fallback local no MVP.
 
@@ -858,7 +858,7 @@ Exemplo de chamada (OpenAI SDK):
 from openai import OpenAI
 client = OpenAI(base_url="https://openrouter.ai/api/v1", api_key=os.environ["OPENROUTER_API_KEY"])
 resp = client.chat.completions.create(
-  model="nex-agi/nex-n2.5-mini:free",
+  model="nex-agi/nex-n2.5-mini",
   messages=[{"role": "user", "content": [
     {"type": "text", "text": SYSTEM_PROMPT + f"\nDica do responsável: {hint_text}"},
     {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
@@ -884,7 +884,7 @@ resp = client.chat.completions.create(
   "confidence": 0.91,
   "needs_review": false,
   "meta": {
-    "engine": "nex-agi/nex-n2.5-mini:free",
+    "engine": "nex-agi/nex-n2.5-mini",
     "provider": "openrouter",
     "prompt_tokens": 1240,
     "completion_tokens": 180,
@@ -902,7 +902,7 @@ resp = client.chat.completions.create(
 | `0.6 ≤ confidence < 0.75` | `extraction_status='baixa_confianca'`; notifica pedindo confirmação |
 | `confidence < 0.6` ou campos críticos nulos | `revisao_humana`; bot envia formulário rápido / UI destaca |
 | `is_homework=false` e conf ≥0.8 | descarta com aviso "Não identifiquei uma tarefa" |
-| 429 rate limit (tier free) ou 5xx/timeout 60s | backoff Celery 1/5/30 min, máx. 3 retries; depois → `falhou` + entrada manual |
+| 429 rate limit (tier pago) ou 5xx/timeout 60s | backoff Celery 1/5/30 min, máx. 3 retries; depois → `falhou` + entrada manual |
 | Tarefa repetida (sha256 igual) | reaproveita extração anterior, **não chama API** |
 | `AI_ENABLED=false` | pula IA, cria tarefa para preenchimento manual |
 
@@ -911,21 +911,30 @@ resp = client.chat.completions.create(
 ```
 # OpenRouter (primário, substitui VLM local)
 OPENROUTER_API_KEY=sk-or-v1-...
-OPENROUTER_MODEL=nex-agi/nex-n2.5-mini:free
+OPENROUTER_MODEL=nex-agi/nex-n2.5-mini
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=https://horadatarefa.app
 OPENROUTER_APP_NAME=Hora da Tarefa
 OPENROUTER_TIMEOUT_SECONDS=60
-OPENROUTER_MAX_TOKENS=2048
+OPENROUTER_MAX_TOKENS=1024
 OPENROUTER_TEMPERATURE=0.1
+OPENROUTER_REASONING_EFFORT=low
 # Pipeline
 AI_ENABLED=true
 AI_CONFIDENCE_OK=0.75
 AI_CONFIDENCE_REVIEW=0.60
 AI_WORKER_CONCURRENCY=3
 AI_MAX_IMAGE_SIDE=1600
+AI_LLM_MAX_SIDE=1024
 AI_JPEG_QUALITY=82
 ```
+
+**Economia de tokens (custo pago):** payload da LLM em `AI_LLM_MAX_SIDE` (1024px —
+~2.4× menos tokens de visão que 1600px; original íntegro no storage),
+`max_tokens` 1024 (JSONs têm ~250), `reasoning.effort=low` (raciocínio é cobrado
+como saída), prompts instruem omitir chaves null, dedupe por `sha256` nunca
+rechama a API. `GET /v1/usage` soma tokens e estima US$ por conta
+(`MODEL_RATES`: nex `0.025/0.10` por 1M).
 
 ---
 
@@ -1168,7 +1177,7 @@ Funcionalidade: Upload de foto da tarefa
     Quando envio uma foto nítida de uma tarefa de Matemática com entrega 25/09
     Então recebo 202 com homework_id e extraction_status "processando"
     E em até 60s a tarefa fica com subject "Matemática", due_at 25/09 e extraction_status "ok"
-    E `extraction_json.meta.engine` é "nex-agi/nex-n2.5-mini:free"
+    E `extraction_json.meta.engine` é "nex-agi/nex-n2.5-mini"
 
   Cenário: Imagem ilegível
     Quando envio uma foto desfocada
@@ -1231,7 +1240,7 @@ Funcionalidade: Upload de foto da tarefa
 | E2E | Playwright (headless) | upload→sugestão→aceitar→notificação (Telegram mock + OpenRouter mock) | agendado |
 | Carga | Locust/K6 | 50 usuários, p95 < 800ms em `/homeworks` | janela de manutenção |
 
-**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data. Teste live usa `OPENROUTER_MODEL=nex-agi/nex-n2.5-mini:free` com `VCR`/cache para não estourar rate limit.
+**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data. Teste live usa `OPENROUTER_MODEL=nex-agi/nex-n2.5-mini` com `VCR`/cache para não estourar rate limit.
 
 **Regras de CI:** unit+contrato em todo PR (com mock); integração IA live manual/noturna. Sem build de imagem `worker-ai` pesada (worker é leve, sem modelo).
 
@@ -1349,7 +1358,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 
 - **RF-01** Cadastrar/editar criança (multi-criança) e alternar contexto ativo.
 - **RF-02** Enviar foto de tarefa via web ou Telegram; anonimizar (resize/strip EXIF/hash) e criar `homework` + `homework_image`.
-- **RF-03** Processar imagem via OpenRouter `nex-agi/nex-n2.5-mini:free` e extrair matéria, enunciado, entrega, duração, prioridade (sem OCR/VLM local).
+- **RF-03** Processar imagem via OpenRouter `nex-agi/nex-n2.5-mini` e extrair matéria, enunciado, entrega, duração, prioridade (sem OCR/VLM local).
 - **RF-04** Sinalizar baixa confiança e permitir revisão humana.
 - **RF-05** Sugerir até 5 melhores slots livres respeitando grade, atividades, deslocamento e quiet hours.
 - **RF-06** Aceitar/rejeitar sugestão e agendar tarefa.
@@ -1371,7 +1380,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 
 1. **Manuscrito infantil:** Nex-N2.5-Mini lê bem manuscrito em foto 1600px JPEG? Validar com 10 fixtures; se não, aceitar só impresso no MVP ou subir para modelo pago?
 2. **Precisão mínima aceitável** de matéria/data nas fixtures (ex.: ≥85% matéria, ≥75% data) com o tier free?
-3. **~~VLM escolhido~~ RESOLVIDO (v1.1):** OpenRouter `nex-agi/nex-n2.5-mini:free` como primário, substituição total do VLM local. Pendente só validar rate limit real e definir `AI_WORKER_CONCURRENCY` (3 vs 5).
+3. **~~VLM escolhido~~ RESOLVIDO (v1.1):** OpenRouter `nex-agi/nex-n2.5-mini` como primário, substituição total do VLM local. Pendente só validar rate limit real e definir `AI_WORKER_CONCURRENCY` (3 vs 5).
 4. **MinIO vs volume simples:** decidir após medir RAM total (agora com folga, MinIO mantido por padrão).
 5. **Autenticação inicial:** só Telegram no MVP ou e-mail/senha desde o início?
 6. **Resumo diário** entra no MVP? (marcado opcional)

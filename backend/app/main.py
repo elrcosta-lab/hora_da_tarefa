@@ -11,6 +11,7 @@ from app.api.homeworks import router as homeworks_router
 from app.api.notifications import router as notifications_router
 from app.api.suggestions import router as suggestions_router
 from app.api.telegram import router as telegram_router
+from app.api.usage import router as usage_router
 from app.core.security import Unauthorized
 from app.core.ratelimit import RateLimited, get_limiter, global_limit
 from fastapi.responses import JSONResponse
@@ -76,6 +77,7 @@ app.include_router(homeworks_router)
 app.include_router(suggestions_router)
 app.include_router(telegram_router)
 app.include_router(notifications_router)
+app.include_router(usage_router)
 
 
 @app.get("/healthz")

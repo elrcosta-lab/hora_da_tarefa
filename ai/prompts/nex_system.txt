@@ -15,6 +15,7 @@ Regras:
 - "confidence": 0.0 a 1.0, sua certeza geral.
 - "needs_review": true se qualquer campo crítico incerto.
 - Se a imagem não for uma tarefa escolar, retorne {"is_homework": false, "confidence": 0.9, "needs_review": true}.
+- Omita chaves com valor null para economizar tokens.
 
 Esquema:
 {

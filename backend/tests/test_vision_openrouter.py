@@ -1,4 +1,4 @@
-"""TDD RED — Extração via OpenRouter nex-n2.5-mini:free (SPECS §5 v1.1).
+"""TDD RED — Extração via OpenRouter nex-n2.5-mini (SPECS §5 v1.1).
 
 Cobre:
 - RF-05: anonimização local (resize ≤1600, strip EXIF, SHA-256) antes de qualquer chamada externa
@@ -65,10 +65,11 @@ def test_extract_calls_openrouter_with_nex_free_and_parses_json():
 
     # chamada OpenRouter correta (SPECS §5.2 E2)
     _, kwargs = mock_client.chat.completions.create.call_args
-    assert kwargs["model"] == "nex-agi/nex-n2.5-mini:free"
+    assert kwargs["model"] == "nex-agi/nex-n2.5-mini"
     assert kwargs["response_format"] == {"type": "json_object"}
     assert kwargs["temperature"] == 0.1
-    assert kwargs["max_tokens"] == 2048
+    assert kwargs["max_tokens"] == 1024
+    assert kwargs["reasoning"] == {"effort": "low"}
     # imagem vai em data-URL base64, nunca o original com EXIF
     content = kwargs["messages"][0]["content"]
     kinds = {c["type"] for c in content}
@@ -80,7 +81,7 @@ def test_extract_calls_openrouter_with_nex_free_and_parses_json():
     assert result.subject == "Matemática"
     assert result.confidence == pytest.approx(0.91)
     assert result.needs_review is False
-    assert result.meta["engine"] == "nex-agi/nex-n2.5-mini:free"
+    assert result.meta["engine"] == "nex-agi/nex-n2.5-mini"
 
 
 def test_low_confidence_marks_needs_review():
@@ -132,6 +133,18 @@ def test_decompression_bomb_fails_gracefully(monkeypatch):
     monkeypatch.setattr(PIL.Image, "MAX_IMAGE_PIXELS", 100)
     with pytest.raises(ExtractionFailed, match="INVALID_IMAGE"):
         extract_homework(_make_test_image(800, 600), client=MagicMock())
+
+
+def test_llm_payload_uses_smaller_image():
+    """Payload da LLM usa AI_LLM_MAX_SIDE (1024): menos tokens de visão."""
+    from app.core.config import get_settings
+    from app.services.vision_openrouter import anonymize_image
+
+    assert get_settings().AI_LLM_MAX_SIDE == 1024
+    anonymized, _ = anonymize_image(_make_test_image(2000, 1200),
+                                    max_side=get_settings().AI_LLM_MAX_SIDE, quality=82)
+    img = Image.open(io.BytesIO(anonymized))
+    assert max(img.size) <= 1024
 
 
 def test_rate_limit_raises_retryable():

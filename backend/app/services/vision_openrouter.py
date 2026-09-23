@@ -1,4 +1,4 @@
-"""Extração via OpenRouter nex-n2.5-mini:free (SPECS §5 v1.1).
+"""Extração via OpenRouter nex-n2.5-mini (SPECS §5 v1.1).
 
 Substituição total da IA local: anonimiza (resize/strip EXIF/hash) e chama
 POST https://openrouter.ai/api/v1/chat/completions em formato OpenAI-compatible.
@@ -73,20 +73,28 @@ def _parse_json_content(content: str) -> dict:
 
 
 def _chat_json(client, settings, messages):
-    """Chamada única OpenRouter (json_object, temp baixa). 429 → retryable."""
+    """Chamada única OpenRouter (json_object, temp baixa). 429 → retryable.
+
+    reasoning effort baixo por padrão: tokens de raciocínio são cobrados como
+    saída e nossos JSONs são extração direta, sem cadeia longa.
+    """
+    kwargs: dict = {
+        "model": settings.OPENROUTER_MODEL,
+        "messages": messages,
+        "response_format": {"type": "json_object"},
+        "temperature": settings.OPENROUTER_TEMPERATURE,
+        "max_tokens": settings.OPENROUTER_MAX_TOKENS,
+        "timeout": settings.OPENROUTER_TIMEOUT_SECONDS,
+        "extra_headers": {
+            "HTTP-Referer": settings.OPENROUTER_SITE_URL,
+            "X-Title": settings.OPENROUTER_APP_NAME,
+        },
+    }
+    effort = (settings.OPENROUTER_REASONING_EFFORT or "").strip().lower()
+    if effort:
+        kwargs["reasoning"] = {"effort": effort}
     try:
-        return client.chat.completions.create(
-            model=settings.OPENROUTER_MODEL,
-            messages=messages,
-            response_format={"type": "json_object"},
-            temperature=settings.OPENROUTER_TEMPERATURE,
-            max_tokens=settings.OPENROUTER_MAX_TOKENS,
-            timeout=settings.OPENROUTER_TIMEOUT_SECONDS,
-            extra_headers={
-                "HTTP-Referer": settings.OPENROUTER_SITE_URL,
-                "X-Title": settings.OPENROUTER_APP_NAME,
-            },
-        )
+        return client.chat.completions.create(**kwargs)
     except Exception as exc:  # noqa: BLE001
         status = getattr(exc, "status_code", None)
         if status == 429 or "429" in str(exc):
@@ -113,6 +121,7 @@ Responda APENAS JSON válido, sem markdown.
 - horários em HH:MM (24h). Se só houver turno ("manhã"), use null e avise em warnings.
 - availability: janelas em que o responsável pode acompanhar a tarefa ("posso", "livre", "disponível", "após as 18h").
 - Nunca invente horários; o que for ilegível vai para warnings e a entrada é descartada.
+- Omita chaves com valor null para economizar tokens.
 Esquema: {"schedules": [{"weekday": int, "start_time": "HH:MM", "end_time": "HH:MM", "subject": str, "kind": "aula"}],
 "activities": [{"title": str, "weekday": int|null, "start_time": "HH:MM", "end_time": "HH:MM", "recurrence": "weekly", "travel_before_min": int, "travel_after_min": int, "is_blocking": bool}],
 "availability": [{"weekday": int, "start_time": "HH:MM", "end_time": "HH:MM"}],
@@ -173,7 +182,7 @@ def extract_routine(text: str | None = None, image_bytes: bytes | None = None,
     parts: list = [{"type": "text", "text": _ROUTINE_SYSTEM + "\n\nRotina:\n" + (text or "").strip()}]
     if image_bytes is not None:
         anonymized, _ = anonymize_image(
-            image_bytes, max_side=settings.AI_MAX_IMAGE_SIDE, quality=settings.AI_JPEG_QUALITY
+            image_bytes, max_side=settings.AI_LLM_MAX_SIDE, quality=settings.AI_JPEG_QUALITY
         )
         b64 = base64.b64encode(anonymized).decode("ascii")
         parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}})
@@ -289,7 +298,7 @@ def extract_homework(
 
     try:
         anonymized, sha = anonymize_image(
-            image_bytes, max_side=settings.AI_MAX_IMAGE_SIDE, quality=settings.AI_JPEG_QUALITY
+            image_bytes, max_side=settings.AI_LLM_MAX_SIDE, quality=settings.AI_JPEG_QUALITY
         )
     except Exception as exc:
         # inclui DecompressionBombError: falha graciosa, nunca derruba o worker

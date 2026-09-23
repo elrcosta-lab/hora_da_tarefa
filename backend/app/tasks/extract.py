@@ -311,6 +311,42 @@ def retry_stale_extractions(now: datetime | None = None, older_than_minutes: int
     return retried
 
 
+# US$/1M tokens por modelo (OpenRouter). Desconhecido → custo 0 (visível como unknown).
+MODEL_RATES = {
+    "nex-agi/nex-n2.5-mini": (0.025, 0.10),
+    "nex-agi/nex-n2.5-mini:free": (0.0, 0.0),
+}
+
+
+def usage_summary(owner_user_id: str) -> dict:
+    """Soma tokens e estima custo das extrações do dono (visibilidade de gasto)."""
+    from app.models import Child
+
+    extractions = prompt_total = completion_total = 0
+    total_cost = 0.0
+    with session_scope() as s:
+        rows = (
+            s.query(Homework)
+            .join(Child, Child.id == Homework.child_id)
+            .filter(Child.owner_user_id == owner_user_id)
+            .all()
+        )
+        for hw in rows:
+            meta = (hw.extraction_json or {}).get("meta", {})
+            pt, ct = meta.get("prompt_tokens"), meta.get("completion_tokens")
+            if pt is None and ct is None:
+                continue
+            extractions += 1
+            prompt_total += int(pt or 0)
+            completion_total += int(ct or 0)
+            rate_in, rate_out = MODEL_RATES.get(meta.get("engine", ""), (0.0, 0.0))
+            total_cost += int(pt or 0) / 1_000_000 * rate_in
+            total_cost += int(ct or 0) / 1_000_000 * rate_out
+    return {"extractions": extractions, "prompt_tokens": prompt_total,
+            "completion_tokens": completion_total,
+            "estimated_cost_usd": round(total_cost, 6)}
+
+
 def clear_store() -> None:
     """Apenas testes."""
     from app.core.storage import get_storage as _get_storage

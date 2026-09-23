@@ -6,13 +6,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     OPENROUTER_API_KEY: str = "sk-or-v1-CHANGE_ME"
-    OPENROUTER_MODEL: str = "nex-agi/nex-n2.5-mini:free"
+    OPENROUTER_MODEL: str = "nex-agi/nex-n2.5-mini"
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     OPENROUTER_SITE_URL: str = "https://horadatarefa.app"
     OPENROUTER_APP_NAME: str = "Hora da Tarefa"
     OPENROUTER_TIMEOUT_SECONDS: int = 60
-    OPENROUTER_MAX_TOKENS: int = 2048
+    OPENROUTER_MAX_TOKENS: int = 1024
     OPENROUTER_TEMPERATURE: float = 0.1
+    OPENROUTER_REASONING_EFFORT: str = "low"
 
     AI_ENABLED: bool = True
     AI_CONFIDENCE_OK: float = 0.75
@@ -20,6 +21,7 @@ class Settings(BaseSettings):
     AI_WORKER_CONCURRENCY: int = 3
     AI_MAX_IMAGE_SIDE: int = 1600
     AI_JPEG_QUALITY: int = 82
+    AI_LLM_MAX_SIDE: int = 1024
 
     TELEGRAM_BOT_TOKEN: str = "change-me"
     TELEGRAM_WEBHOOK_SECRET: str = "change-me"
