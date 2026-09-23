@@ -81,9 +81,15 @@ docker compose ps                    # todos healthy
 docker compose logs api | grep -i alembic   # 0001→0011 aplicadas
 ```
 
-Roteiro funcional (navegador + Telegram): registro com consentimento →
-onboarding (filho → grade → código) → `/start <código>` → foto →
-revisão → agendar → `/hoje` → concluir → CSV em Tarefas.
+Roteiro funcional (navegador + Telegram): registro com consentimento → **aprovação do admin (abaixo)** → onboarding (filho → grade → código) → `/start <código>` → foto → revisão → agendar → `/hoje` → concluir → CSV em Tarefas.
+
+**Aprovar/rejeitar contas (RF-16):** sem UI de admin no beta — via API com token do admin:
+```bash
+export AT="<access_token do admin>"
+curl -s http://localhost:8081/v1/admin/users | python3 -c "import json,sys; [print(u['user_id'], u['email'], u['status']) for u in json.load(sys.stdin)['items']]"
+curl -s -X POST http://localhost:8081/v1/admin/users/<user_id>/approve -H "Authorization: Bearer $AT"
+# rejeitar: POST .../reject (revoga sessões; admin não pode ser rejeitado)
+```
 
 ## 5. Operação e rollback
 

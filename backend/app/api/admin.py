@@ -48,6 +48,26 @@ class ResetIn(BaseModel):
     new_password: str
 
 
+@router.post("/users/{user_id}/approve", status_code=200)
+def admin_approve_user(user_id: str, admin_id: str = Depends(require_admin)):
+    _ = admin_id
+    try:
+        return A.approve_user(user_id)
+    except U.NotFound:
+        return _err("USER_NOT_FOUND", "Usuário não encontrado.", 404)
+
+
+@router.post("/users/{user_id}/reject", status_code=200)
+def admin_reject_user(user_id: str, admin_id: str = Depends(require_admin)):
+    _ = admin_id
+    try:
+        return A.reject_user(user_id)
+    except U.NotFound:
+        return _err("USER_NOT_FOUND", "Usuário não encontrado.", 404)
+    except ValueError as exc:
+        return _err("VALIDATION_ERROR", str(exc), 409)
+
+
 @router.post("/users/{user_id}/reset-password", status_code=200)
 def admin_reset_password(user_id: str, payload: ResetIn, admin_id: str = Depends(require_admin)):
     _ = admin_id

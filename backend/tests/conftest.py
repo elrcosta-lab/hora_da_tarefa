@@ -36,12 +36,15 @@ def _db():
 
 
 def make_auth(client, name="Teste", email=None, password="senha-forte-123"):
-    """Registra + loga e devolve (headers, user_id)."""
+    """Registra + aprova (RF-16) + loga e devolve (headers, user_id)."""
     import uuid as _uuid
 
     email = email or f"{name.lower()}-{_uuid.uuid4().hex[:8]}@teste.com"
     r = client.post("/v1/auth/register", json={"name": name, "email": email, "password": password,
                                                "lgpd_consent": True, "lgpd_version": "termos-v1"})
     assert r.status_code == 201, r.text
+    from app.tasks import admin as A
+
+    A.approve_user(r.json()["user_id"])
     t = client.post("/v1/auth/login", json={"email": email, "password": password}).json()
     return {"Authorization": f"Bearer {t['access_token']}"}, t["user_id"]

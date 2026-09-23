@@ -40,6 +40,13 @@ def _register(c, name="Carlos", email="carlos@teste.com", password="senha-forte-
     return r.json()
 
 
+def _approve(user_id: str):
+    """RF-16: testes de auth focam no fluxo autenticado; aprovação explícita."""
+    from app.tasks import admin as A
+
+    return A.approve_user(user_id)
+
+
 def _login(c, email="carlos@teste.com", password="senha-forte-123"):
     r = c.post("/v1/auth/login", json={"email": email, "password": password})
     assert r.status_code == 200, r.text
@@ -50,7 +57,9 @@ def test_register_login_refresh_flow():
     c = _client()
     reg = _register(c)
     assert "user_id" in reg
+    assert reg["status"] == "pending"
     assert "password" not in str(reg).lower() and "hash" not in str(reg).lower()
+    _approve(reg["user_id"])
     tok = _login(c)
     assert tok["token_type"] == "bearer"
     assert "access_token" in tok and "refresh_token" in tok
@@ -94,7 +103,8 @@ def test_register_requires_lgpd_consent():
 
 def test_refresh_rotation_and_reuse_revokes_family():
     c = _client()
-    _register(c)
+    reg = _register(c)
+    _approve(reg["user_id"])
     t1 = _login(c)
     r1 = c.post("/v1/auth/refresh", json={"refresh_token": t1["refresh_token"]})
     assert r1.status_code == 200, r1.text
@@ -109,10 +119,12 @@ def test_refresh_rotation_and_reuse_revokes_family():
 
 def test_cross_account_child_is_forbidden():
     c = _client()
-    _register(c, name="A", email="a@teste.com")
+    ra = _register(c, name="A", email="a@teste.com")
+    _approve(ra["user_id"])
     ta = _login(c, email="a@teste.com")
     ha = {"Authorization": f"Bearer {ta['access_token']}"}
-    _register(c, name="B", email="b@teste.com")
+    rb = _register(c, name="B", email="b@teste.com")
+    _approve(rb["user_id"])
     tb = _login(c, email="b@teste.com")
     hb = {"Authorization": f"Bearer {tb['access_token']}"}
 

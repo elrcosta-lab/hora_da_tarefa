@@ -123,6 +123,17 @@ RESTRICTED_MSG = (
 )
 
 
+PENDING_MSG = (
+    "⏳ Sua conta está em análise.\n"
+    "Aguarde a liberação do administrador para usar o bot."
+)
+
+
+def _is_approved(user: dict | None) -> bool:
+    """RF-16: só conta approved usa o bot."""
+    return user is not None and (user.get("status") or "pending") == "approved"
+
+
 def _render_dedupe(rec: dict) -> str:
     """Reenvio: mostra o estado atual em vez de 'processando' genérico."""
     subject = rec.get("subject") or "tarefa"
@@ -174,6 +185,9 @@ def _try_link(chat_id: int, telegram_user_id: int, code: str) -> bool:
         return False
     if user is None:
         return False
+    if not _is_approved(user):
+        _send(chat_id, PENDING_MSG)
+        return True
     _send(chat_id, f"Conta vinculada com sucesso, {user['name']}! ✅ Agora envie a foto da tarefa.")
     return True
 
@@ -189,15 +203,19 @@ def handle_update(update: dict) -> dict:
         return {"ok": True, "deduplicated": True}
     _SEEN.add(update_id)
 
-    # callback_query (botões inline) — exige vínculo
+    # callback_query (botões inline) — exige vínculo + conta aprovada (RF-16)
     cb = update.get("callback_query")
     if cb:
         chat_id = (cb.get("message") or {}).get("chat", {}).get("id") or cb.get("from", {}).get("id")
         cb_user = (cb.get("from") or {}).get("id")
-        owner_cb = (_resolve_user(cb_user) or {}).get("user_id") if cb_user is not None else None
+        cb_user_dict = _resolve_user(cb_user) if cb_user is not None else None
+        owner_cb = (cb_user_dict or {}).get("user_id")
         if owner_cb is None:
             _send(chat_id, RESTRICTED_MSG)
             return {"ok": True, "restricted": True}
+        if not _is_approved(cb_user_dict):
+            _send(chat_id, PENDING_MSG)
+            return {"ok": True, "restricted": True, "pending": True}
         data = cb.get("data", "")
         if data.startswith("concluir:"):
             hid = data.split(":", 1)[1]
@@ -251,8 +269,9 @@ def handle_update(update: dict) -> dict:
         _send(chat_id, "Código inválido ou já utilizado. Peça um novo código na plataforma.")
         return {"ok": True}
 
-    # gate: só telegram_user_id vinculados passam daqui
-    if telegram_user_id is None or _resolve_user(telegram_user_id) is None:
+    # gate: só telegram_user_id vinculados E com conta aprovada passam daqui (RF-16)
+    linked_user = _resolve_user(telegram_user_id) if telegram_user_id is not None else None
+    if linked_user is None:
         if text.startswith("/start"):
             _send(chat_id,
                   f"Olá, {name}! 👋 Eu sou o Hora da Tarefa.\n"
@@ -260,6 +279,9 @@ def handle_update(update: dict) -> dict:
         else:
             _send(chat_id, RESTRICTED_MSG)
         return {"ok": True, "restricted": True}
+    if not _is_approved(linked_user):
+        _send(chat_id, PENDING_MSG)
+        return {"ok": True, "restricted": True, "pending": True}
 
     # foto → upload (RF-04): download real via getFile; falha → erro, nada criado
     if message.get("photo"):

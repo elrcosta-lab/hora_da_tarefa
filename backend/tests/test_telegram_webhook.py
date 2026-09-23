@@ -32,9 +32,11 @@ def _clean(monkeypatch):
 
 def _link(chat_id: int, name: str = "Teste") -> dict:
     """Vincula o chat id diretamente (atalho de teste p/ o fluxo de código)."""
+    from app.tasks import admin as A
     from app.tasks import users as U
 
     u = U.create_user(name)
+    A.approve_user(u["user_id"])
     code = u["link_code"]
     linked = U.link_telegram(code, chat_id)
     assert linked is not None

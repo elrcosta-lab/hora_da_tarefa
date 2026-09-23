@@ -1,7 +1,7 @@
 # PRD — Hora da Tarefa
 
 > **Status:** Beta (VPS)
-> **Versão:** 1.2 (OpenRouter pago + polling)
+> **Versão:** 1.3 (aprovação de contas)
 > **Última atualização:** 2026-09-23
 > **Responsável:** Product Owner (a definir)
 > **Classificação:** Documento de requisitos de produto (PRD)
@@ -183,6 +183,7 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 **Critérios de aceite:**
 - Criar criança válida retorna sucesso e aparece na listagem.
 - Bloquear cadastro sem consentimento parental.
+- Conta nova nasce **pendente** e só acessa a plataforma após **aprovação do admin** (login/vínculo/bot bloqueados até lá).
 
 ### RF-02 — Cadastro de Grade Escolar (M)
 
@@ -638,6 +639,7 @@ sequenceDiagram
 | 1.0 | 2026-09-22 | Subagente PRD | Versão inicial completa (MVP + pós-MVP, IA local, motor de slots, Telegram) |
 | 1.1 | 2026-09-22 | OpenCode | Migração IA local → OpenRouter `nex-agi/nex-n2.5-mini` (substituição total, anonimização pré-envio, sem Ollama/Tesseract no caminho crítico) |
 | 1.2 | 2026-09-23 | OpenCode | Beta na VPS: modelo **pago** (`OPENROUTER_MODEL`), bot em **polling** (`RUN_MODE`), FSM real (`pendente…arquivada` + `extraction_status`), MinIO no compose, beat APScheduler, linhas do bot com nome da criança |
+| 1.3 | 2026-09-23 | OpenCode | RF-16: conta nova pendente até aprovação do admin (login/vínculo/bot bloqueados; backfill de contas existentes) |
 
 ---
 

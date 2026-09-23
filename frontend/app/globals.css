@@ -138,5 +138,6 @@ h2 { font-size: 18px; margin: 0 0 12px; }
 .auth-card input { width: 100%; }
 .auth-card .btn-primary { width: 100%; margin-top: 16px; }
 .error { background: #fee2e2; color: #b91c1c; border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 14px; }
+.notice { background: #fef9c3; color: #854d0e; border-radius: 8px; padding: 10px 12px; margin-top: 12px; font-size: 14px; }
 .muted { color: var(--text-muted); font-size: 13px; }
 .empty { text-align: center; color: var(--text-muted); padding: 24px; }

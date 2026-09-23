@@ -12,11 +12,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
+    setNotice(null);
     if (mode === "register" && !consent) {
       setError("É preciso aceitar o consentimento parental para criar a conta.");
       return;
@@ -27,7 +29,10 @@ export default function LoginPage() {
         await login(email, password);
       } else {
         await register(name, email, password);
-        router.push("/onboarding");
+        // RF-16: conta pendente — volta ao login com aviso, sem auto-login
+        setMode("login");
+        setPassword("");
+        setNotice("Conta criada! Ela entra em análise e será liberada pelo administrador. Tente entrar mais tarde.");
         return;
       }
       // login: sem filhos → onboarding; com filhos → dashboard
@@ -78,6 +83,7 @@ export default function LoginPage() {
           </button>
         </form>
         {error && <div className="error" role="alert">{error}</div>}
+        {notice && <div className="notice" role="status">{notice}</div>}
         <p className="muted" style={{ marginTop: 16 }}>
           {mode === "login" ? (
             <>Sem conta? <a href="#" onClick={(e) => { e.preventDefault(); setMode("register"); }}>Criar conta</a></>

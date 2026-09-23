@@ -83,7 +83,12 @@ export async function login(email: string, password: string) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
-  if (!r.ok) throw new Error("E-mail ou senha inválidos.");
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    // RF-16: conta pendente/rejeitada tem mensagem própria (não é erro de credencial)
+    if (err?.error?.message) throw new Error(err.error.message);
+    throw new Error("E-mail ou senha inválidos.");
+  }
   const body = await r.json();
   saveTokens({ access_token: body.access_token, refresh_token: body.refresh_token });
   if (typeof window !== "undefined" && body.user_id) localStorage.setItem(LS_USER, body.user_id);
@@ -100,5 +105,5 @@ export async function register(name: string, email: string, password: string) {
     const err = await r.json().catch(() => ({}));
     throw new Error(err?.error?.message || "Falha no cadastro.");
   }
-  await login(email, password);
+  // RF-16: conta nasce pendente — sem auto-login; liberação é do administrador.
 }

@@ -32,6 +32,7 @@ def admin_credentials() -> tuple[str, str]:
 
 def _to_public(u: AppUser) -> dict:
     return {"user_id": u.id, "name": u.name, "email": u.email, "role": u.role or "user",
+            "status": u.status or "pending",
             "telegram_user_id": u.telegram_user_id,
             "created_at": u.created_at.isoformat() if u.created_at else None}
 
@@ -46,16 +47,48 @@ def ensure_admin(email: str | None = None, password: str | None = None) -> dict:
         u = s.query(AppUser).filter_by(email=email).one_or_none()
         if u is None:
             u = AppUser(id=str(uuid.uuid4()), name="Administrador", email=email,
-                        password_hash=hash_password(password), role="admin")
+                        password_hash=hash_password(password), role="admin", status="approved")
             s.add(u)
         else:
             u.role = "admin"
+            u.status = "approved"
             if not u.password_hash:
                 # conta legada (ex.: criada pelo bot) sem senha: bootstrap inicial
                 u.password_hash = hash_password(password)
             u.updated_at = datetime.now(timezone.utc)
         s.flush()
         return _to_public(u)
+
+
+def approve_user(user_id: str) -> dict:
+    """RF-16: libera conta pendente/rejeitada para uso."""
+    from app.tasks.users import NotFound
+
+    with session_scope() as s:
+        u = s.get(AppUser, user_id)
+        if u is None:
+            raise NotFound(user_id)
+        u.status = "approved"
+        u.updated_at = datetime.now(timezone.utc)
+        s.flush()
+        return _to_public(u)
+
+
+def reject_user(user_id: str) -> dict:
+    """RF-16: rejeita conta e revoga todas as sessões (refresh). Admin não pode ser rejeitado."""
+    from app.tasks.users import NotFound
+
+    with session_scope() as s:
+        u = s.get(AppUser, user_id)
+        if u is None:
+            raise NotFound(user_id)
+        if (u.role or "user") == "admin":
+            raise ValueError("conta de admin não pode ser rejeitada")
+        u.status = "rejected"
+        revoked = s.query(RefreshToken).filter_by(user_id=user_id).delete(synchronize_session=False)
+        u.updated_at = datetime.now(timezone.utc)
+        s.flush()
+        return {"user_id": user_id, "status": "rejected", "sessions_revoked": revoked}
 
 
 def list_users() -> list[dict]:

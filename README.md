@@ -70,6 +70,10 @@ Verificação: `GET /healthz` e `/readyz` no container `api`.
 
 Comandos: `/start` `/ajuda` `/hoje` `/tarefas` `/concluir <id>` `/criancas`. Acesso só com conta vinculada (código de 6 dígitos gerado em Configurações → `/start <código>`). Sem vínculo, nada é criado nem listado.
 
+## Contas e aprovação (RF-16)
+
+Conta nova nasce **pendente** e só usa a plataforma após aprovação do admin (login, vínculo Telegram e bot retornam `ACCOUNT_PENDING`). Rejeitada → `ACCOUNT_REJECTED` + sessões revogadas. Admin aprova/rejeita via `POST /v1/admin/users/:id/approve|reject` (sem UI no beta — ver `docs/GO-LIVE.md` §4).
+
 ## Regras de contribuição
 
 - **Spec-first:** comportamento novo/mudado exige atualização de `SPECS.md` (e `PRD.md`, se produto) **no mesmo commit**.

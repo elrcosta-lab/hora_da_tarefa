@@ -23,8 +23,13 @@ class ConsentRequired(Exception):
     pass
 
 
+class NotApproved(Exception):
+    """Conta ainda não liberada pelo admin (RF-16)."""
+
+
 def _to_dict(u: AppUser) -> dict:
     return {"user_id": u.id, "name": u.name, "email": u.email, "role": u.role or "user",
+            "status": u.status or "pending",
             "telegram_user_id": u.telegram_user_id,
             "link_code": u.telegram_link_code,
             "lgpd_consent_at": u.lgpd_consent_at.isoformat() if u.lgpd_consent_at else None,
@@ -108,6 +113,8 @@ def generate_link_code(user_id: str) -> dict:
         u = s.get(AppUser, user_id)
         if u is None:
             raise NotFound(user_id)
+        if (u.status or "pending") != "approved":
+            raise NotApproved(user_id)
         _stamp_code(u, s)
         s.flush()
         return _to_dict(u)

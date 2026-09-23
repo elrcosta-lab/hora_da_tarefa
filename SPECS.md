@@ -1,7 +1,7 @@
 # SPECS — Hora da Tarefa (SDD)
 
 > Documento de Especificação Técnica (Spec-Driven Development).
-> Autor: subagente SPEC + OpenCode · Versão: 1.2 (beta VPS) · Status: **Aprovada para o beta**
+> Autor: subagente SPEC + OpenCode · Versão: 1.3 (aprovação de contas) · Status: **Aprovada para o beta**
 > Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini` pago) + bot em polling.
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
 
@@ -177,6 +177,8 @@ CREATE TYPE notification_status AS ENUM ('scheduled','sent','failed','cancelled'
 | locale | text | NOT NULL default 'pt-BR' | |
 | telegram_user_id | bigint | UNIQUE, NULL | vínculo bot |
 | telegram_link_code | text | NULL | código efêmero p/ vincular |
+| status | text | NOT NULL default 'pending' | 'pending' → 'approved' (admin) → uso liberado; 'rejected' bloqueia e revoga sessões |
+| role | text | NOT NULL default 'user' | 'admin' via seed/promoção (migração `0011`) |
 | lgpd_consent_at | timestamptz | NULL | consentimento |
 | lgpd_consent_version | text | NULL | versão do termo |
 | retention_image_days | int | NOT NULL default 90 | política de retenção |
@@ -617,7 +619,7 @@ Idempotência: dedupe por `update_id` em tabela/redis (TTL 24h); updates repetid
 
 | Método | Rota | Descrição |
 |---|---|---|
-| POST | `/auth/telegram/link` | Gera `telegram_link_code` (6 dígitos, single-use) para vincular conta — `{name}` cria usuário (201) ou `{user_id}` regenera código (200); consumo no chat vincula `telegram_user_id` (gate §6.1) |
+| POST | `/auth/telegram/link` | Gera `telegram_link_code` (6 dígitos, single-use) para vincular conta — `{name}` cria usuário (201) ou `{user_id}` regenera código (200); consumo no chat vincula `telegram_user_id` (gate §6.1). **Só contas `approved` geram código ou vinculam** (RF-16): pendente/rejeitada recebe 403 `ACCOUNT_PENDING`/`ACCOUNT_REJECTED` |
 | GET | `/children` | Lista crianças do usuário |
 | POST | `/children` | Cria criança |
 | GET | `/children/:id/agenda` | Grade + atividades + slots ocupados |
@@ -627,6 +629,8 @@ Idempotência: dedupe por `update_id` em tabela/redis (TTL 24h); updates repetid
 | PATCH | `/homeworks/:id` | Revisão humana (RF-06): edita subject/title/statement/due_at/estimated_minutes/priority; preencher críticos promove `baixa_confianca` → `ok`; 400 em dado inválido |
 | GET | `/homeworks/today` | Dashboard Hoje: `{date, due_today[], overdue[], scheduled_today[]}` (filtro `child_id`/`date` opcional, escopo por dono) |
 | GET | `/homeworks/export` | CSV UTF-8 (com BOM p/ Excel) com os mesmos filtros de `GET /homeworks` |
+| POST | `/admin/users/:id/approve` | Admin aprova conta `pending` → `approved` (RF-16); 404 se inexistente |
+| POST | `/admin/users/:id/reject` | Admin rejeita conta → `rejected` + revoga refresh tokens (RF-16); 409 se alvo é admin |
 
 ---
 
@@ -1308,6 +1312,7 @@ Funcionalidade: Upload de foto da tarefa
 ### 10.5 AuthN/AuthZ
 
 - JWT curto (15 min) + refresh (7 dias, rotacionável). `POST /v1/auth/register` (409 `EMAIL_TAKEN`), `/login` (401), `/refresh` (401). Senhas em Argon2id (RNF-06).
+- **Aprovação de contas (RF-16, ativo):** `register` cria com `status='pending'` (sem tokens); `/login` com pendente → 403 `ACCOUNT_PENDING`, rejeitada → 403 `ACCOUNT_REJECTED` (credencial errada segue 401, sem oráculo). `generate_link_code`, vínculo no chat e gate do bot exigem `approved` (bot responde "conta em análise"). Admin aprova/rejeita via `POST /v1/admin/users/:id/approve|reject`; reject revoga refresh tokens (access residual expira em ≤15 min). Migração `0012` com backfill `approved` p/ contas existentes; seed admin nasce `approved`.
 - **Escopo por dono (ativo):** `child.owner_user_id` + `homework.created_by_user_id`; todas as rotas exigem Bearer (401 sem) e conta cruzada recebe 403 `FORBIDDEN` (CA-05). Migração `0004`.
 - Checagem de posse **no servidor** em toda rota de recurso (`guardian` ↔ `child`); previne IDOR.
 - Bot opera no mesmo processo da API e valida vínculo por `telegram_user_id` (+ `secret_token` no modo webhook).
@@ -1373,6 +1378,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 | RF Telas/Design | §7, §8 |
 | RNF Performance/Infra | §0.3, §11 |
 | LGPD/Segurança | §10 |
+| Contas/admin | §2.3 (`status`), §3.11 (approve/reject), §10.5 (RF-16) |
 | Qualidade/Testes/Obs | §9 |
 
 ---
@@ -1394,6 +1400,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 - **RF-13** Reprocessar extração de uma tarefa sob demanda.
 - **RF-14** Aplicar retenção/expurgo de imagens e consentimento LGPD.
 - **RF-15** Proteger rotas por dono e aplicar rate limiting.
+- **RF-16** Exigir aprovação do admin antes de liberar conta nova (`pending` → `approved`/`rejected`; login, vínculo Telegram e bot bloqueados até aprovação).
 
 ---
 
@@ -1429,3 +1436,5 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 > v1.1 (2026-09-22): migração IA local → OpenRouter Nex-N2.5-Mini free. Gaps v1.0 (benchmark VLM OQ-3, RAM OQ-4) resolvidos por eliminação da inferência local.
 >
 > v1.2 (2026-09-23): beta na VPS — modelo pago, bot em polling (`RUN_MODE`), FSM real documentada, MinIO no compose, beat APScheduler, linhas do bot com nome da criança, auditoria A1–A7 corrigida. OQ-3/5/10/11 resolvidos; métricas Prometheus e backup diário seguem como alvo pré-GA.
+>
+> v1.3 (2026-09-23): RF-16 — conta nova nasce `pending` e só usa a plataforma após aprovação do admin (login/vínculo/bot bloqueados; migração `0012` com backfill).

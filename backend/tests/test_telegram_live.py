@@ -49,9 +49,11 @@ def _headers():
 
 
 def _link(chat_id: int):
+    from app.tasks import admin as A
     from app.tasks import users as U
 
     u = U.create_user("Mae")
+    A.approve_user(u["user_id"])
     assert U.link_telegram(u["link_code"], chat_id) is not None
 
 

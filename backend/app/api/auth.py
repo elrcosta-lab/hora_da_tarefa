@@ -52,7 +52,8 @@ def register_view(payload: RegisterIn):
         return _err("EMAIL_TAKEN", "E-mail já cadastrado.", 409)
     except ValueError as exc:
         return _err("VALIDATION_ERROR", str(exc), 400)
-    return {"user_id": user["user_id"], "name": user["name"], "email": user["email"]}
+    return {"user_id": user["user_id"], "name": user["name"], "email": user["email"],
+            "status": user.get("status", "pending")}
 
 
 @router.post("/login", status_code=200,
@@ -61,6 +62,11 @@ def login_view(payload: LoginIn):
     user = U.authenticate(payload.email, payload.password)
     if user is None:
         return _err("INVALID_CREDENTIALS", "E-mail ou senha inválidos.", 401)
+    status = user.get("status", "pending")
+    if status == "pending":
+        return _err("ACCOUNT_PENDING", "Conta em análise — aguarde a liberação do administrador.", 403)
+    if status == "rejected":
+        return _err("ACCOUNT_REJECTED", "Conta não aprovada. Fale com o administrador.", 403)
     return {"user_id": user["user_id"], **_tokens(user["user_id"])}
 
 
@@ -83,6 +89,8 @@ def link_view(payload: LinkIn, current_user_id: str = Depends(get_current_user_i
                 return JSONResponse(status_code=200, content=data)
             except U.NotFound:
                 return _err("USER_NOT_FOUND", "Usuário não encontrado.", 404)
+            except U.NotApproved:
+                return _err("ACCOUNT_PENDING", "Conta em análise — aguarde a liberação do administrador.", 403)
         if payload.name:
             return U.create_user(payload.name)
     except ValueError as exc:
