@@ -571,8 +571,13 @@ e/ou foto (bilhete, grade impressa, mensagem), via `nex-agi/nex-n2.5-mini`.
 (`EXTRACTION_FAILED`, `retryable: true` — free-tier varia; UI oferece "tentar de novo"),
 409 em sobreposição (`SCHEDULE_OVERLAP`), 403 cross-account.
 
-Tabela `parent_availability` (migração `0008`): janelas do responsável por criança;
-o motor soma +12 no score de slots contidos nela (`reason` indica "responsável disponível").
+Tabela `parent_availability` (migrações `0008`+`0009`): janelas do responsável por criança
+com `kind` (`available`=+12 e "responsável disponível" / `busy`=−25 e "trabalhando (evitar)",
+penaliza sem bloquear), `week_parity` (null=toda semana, 0=pares ISO, 1=ímpares;
+âncora obrigatória "esta semana"=atual/"outra"=invertida, sem âncora→null+warning) e
+`date` (exceção do dia, ex. folga 00:00–23:59, sobrescreve a regra semanal).
+Turno detectado da grade (`detect_shift`; `preferences.shift` sobrescreve): vespertino
+prioriza manhãs livres (foco 8–12h).
 
 ### 3.8 `GET /suggestions`
 

@@ -70,7 +70,11 @@ class Activity(Base):
 
 
 class ParentAvailability(Base):
-    """Janelas em que o responsável pode acompanhar a tarefa (importadas por inferência)."""
+    """Janelas do responsável: available (acompanha) ou busy (trabalho/escala).
+
+    week_parity: null=toda semana, 0=semanas pares ISO, 1=ímpares.
+    date: exceção de dia específico (ex.: "hoje de folga"), override da regra semanal.
+    """
 
     __tablename__ = "parent_availability"
 
@@ -79,5 +83,8 @@ class ParentAvailability(Base):
     weekday: Mapped[int] = mapped_column(SmallInteger, nullable=False)
     start_time: Mapped[str] = mapped_column(String(5), nullable=False)
     end_time: Mapped[str] = mapped_column(String(5), nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False, default="available")
+    week_parity: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    date: Mapped[Date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)

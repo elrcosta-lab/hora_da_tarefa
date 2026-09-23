@@ -204,11 +204,15 @@ def get_agenda(child_id: str) -> dict:
 
 def _availability_to_dict(a: ParentAvailability) -> dict:
     return {"id": a.id, "child_id": a.child_id, "weekday": a.weekday,
-            "start_time": a.start_time, "end_time": a.end_time}
+            "start_time": a.start_time, "end_time": a.end_time,
+            "kind": a.kind or "available", "week_parity": a.week_parity,
+            "date": a.date.isoformat() if a.date else None}
 
 
 def save_availability(child_id: str, entries: list[dict], replace: bool = False) -> dict:
     """Salva janelas do responsável (import por inferência ou manual)."""
+    import re as _re
+
     with session_scope() as s:
         if s.get(Child, child_id) is None:
             raise NotFound(child_id)
@@ -222,8 +226,24 @@ def save_availability(child_id: str, entries: list[dict], replace: bool = False)
             en = _parse_hm(e.get("end_time", ""))
             if en <= st:
                 raise Validation("end_time deve ser maior que start_time")
+            kind = (e.get("kind") or "available").strip().lower()
+            if kind not in ("available", "busy"):
+                raise Validation("kind deve ser available|busy")
+            wp = e.get("week_parity")
+            if wp is not None and wp not in (0, 1):
+                raise Validation("week_parity deve ser 0, 1 ou null")
+            dt = e.get("date")
+            parsed_date = None
+            if dt is not None:
+                if not (isinstance(dt, str) and _re.fullmatch(r"\d{4}-\d{2}-\d{2}", dt.strip())):
+                    raise Validation("date deve ser YYYY-MM-DD ou null")
+                from datetime import date as _date
+
+                y, m, d = map(int, dt.strip().split("-"))
+                parsed_date = _date(y, m, d)
             s.add(ParentAvailability(id=str(uuid.uuid4()), child_id=child_id, weekday=wd,
-                                     start_time=e.get("start_time"), end_time=e.get("end_time")))
+                                     start_time=e.get("start_time"), end_time=e.get("end_time"),
+                                     kind=kind, week_parity=wp, date=parsed_date))
             created += 1
         return {"child_id": child_id, "created": created, "replaced": bool(replace)}
 

@@ -159,6 +159,7 @@ Responda APENAS JSON válido, sem markdown.
 - availability: janelas do responsável. kind "available" (pode acompanhar: "posso", "livre", "de folga", "após as 18h") ou "busy" (trabalho/plantão/escala: "trabalho", "plantão", "estou trabalhando").
 - Escalas alternadas ("uma semana seg/qua/sex, outra ter/qui/sab"; "semana sim, semana não"): week_parity 0=semanas pares ISO, 1=ímpares; sem alternância, null.
 - Exceções de dia ("hoje estou de folga", "dia 25 livre"): date em YYYY-MM-DD, vale só naquele dia.
+  "Dia todo livre/de folga" sem horas → start_time 00:00, end_time 23:59.
 - Nunca invente horários; o que for ilegível vai para warnings e a entrada é descartada.
 - Omita chaves com valor null para economizar tokens.
 Esquema: {"schedules": [{"weekday": int, "start_time": "HH:MM", "end_time": "HH:MM", "subject": str, "kind": "aula"}],
@@ -232,11 +233,15 @@ def extract_routine(text: str | None = None, image_bytes: bytes | None = None,
 
     today = today or _dt.now(ZoneInfo("America/Sao_Paulo"))
     iso_week = today.isocalendar()[1]
+    par, other = iso_week % 2, 1 - iso_week % 2
     anchor = (f"Hoje é {today.strftime('%A')} ({today.date().isoformat()}), "
-              f"semana ISO {iso_week} (paridade {iso_week % 2}). "
-              f"Use-a para resolver 'hoje', 'esta semana' (paridade {iso_week % 2}) e "
-              f"'outra/próxima semana' (paridade {1 - iso_week % 2}). "
-              f"Se não der para ancorar a alternância, deixe week_parity null e avise em warnings.")
+              f"semana ISO {iso_week} (paridade {par}, hoje incluso). "
+              f"REGRA DE ANCORAGEM (obrigatória): quando o texto disser 'esta semana X, "
+              f"na outra/outra semana Y', atribua ao conjunto X week_parity={par} e ao "
+              f"conjunto Y week_parity={other} — nunca null nesse caso. "
+              f"'Hoje estou de folga/livre' vira date={today.date().isoformat()} kind=available. "
+              f"Só use week_parity null quando NÃO houver alternância nem âncora possível, "
+              f"e avise em warnings.")
 
     parts: list = [{"type": "text",
                     "text": _ROUTINE_SYSTEM + "\n\n" + anchor + "\n\nRotina:\n" + (text or "").strip()}]

@@ -187,7 +187,7 @@ export default function CriancasPage() {
             <form onSubmit={importRoutine}>
               <textarea
                 rows={3} value={impText} onChange={(e) => setImpText(e.target.value)}
-                placeholder={"Ex.: Aula seg a sex 07:30-12:00. Natação qua 17h-18h. Posso acompanhar seg e qua 18h-20h."}
+                placeholder={"Ex.: Aula seg a sex 07:30-12:00. Natação qua 17h-18h. Trabalho seg/qua/sex de manhã; outra semana ter/qui/sab. Hoje de folga."}
                 aria-label="Texto da rotina" style={{ width: "100%" }}
               />
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 8, alignItems: "center" }}>

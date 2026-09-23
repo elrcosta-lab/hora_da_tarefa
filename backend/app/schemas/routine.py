@@ -26,6 +26,9 @@ class ParentWindow(BaseModel):
     weekday: int = Field(ge=0, le=6)
     start_time: str
     end_time: str
+    kind: str = "available"
+    week_parity: Optional[int] = Field(default=None, ge=0, le=1)
+    date: Optional[str] = None
 
 
 class RoutineExtractionResult(BaseModel):

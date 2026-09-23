@@ -127,4 +127,9 @@ def test_suggestions_respect_real_routine():
         ],
     }, headers=h)
     blocked = c.get("/v1/suggestions", params={"homework_id": hid, "limit": 5}, headers=h).json()["suggestions"]
-    assert len(blocked) < len(free)
+    # tardes bloqueadas a semana toda: sugestões migram para as manhãs livres, sem colidir
+    assert len(blocked) > 0
+    for s in blocked:
+        h0 = int(s["start_at"][11:13])
+        assert not (14 <= h0 < 21)
+    assert blocked[0]["start_at"][11:13] < "14"

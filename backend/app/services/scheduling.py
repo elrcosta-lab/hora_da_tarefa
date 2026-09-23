@@ -66,8 +66,18 @@ def _merge(intervals):
     return merged
 
 
-def _focus_factor(start: datetime) -> float:
+def _focus_factor(start: datetime, shift: str | None = None) -> float:
     h = start.hour + start.minute / 60
+    if shift == "vespertino":
+        if 8 <= h < 12:
+            return 1.0
+        if 18 <= h < 20:
+            return 0.7
+        if 12 <= h < 14:
+            return 0.6
+        if 14 <= h < 18:
+            return 0.5
+        return 0.2
     if 14 <= h < 18:
         return 1.0
     if 18 <= h < 20:
@@ -77,10 +87,68 @@ def _focus_factor(start: datetime) -> float:
     return 0.2
 
 
-def _in_parent_window(slot_start, slot_end, availability) -> bool:
-    """Slot contido numa janela do responsável (mesmo weekday)."""
-    for w in availability or []:
+def detect_shift(schedules) -> str | None:
+    """Turno predominante da grade: minutos de aula antes vs depois das 12h."""
+    before = after = 0
+    for sc in schedules or []:
         try:
+            s = _parse_hm(sc["start_time"])
+            e = _parse_hm(sc["end_time"])
+        except Exception:
+            continue
+        noon = 12 * 60
+        sm, em = s.hour * 60 + s.minute, e.hour * 60 + e.minute
+        before += max(0, min(em, noon) - sm)
+        after += max(0, em - max(sm, noon))
+    if before + after == 0:
+        return None
+    if after > before * 1.5:
+        return "vespertino"
+    if before > after * 1.5:
+        return "matutino"
+    return None
+
+
+def _week_parity(date) -> int:
+    return date.isocalendar()[1] % 2
+
+
+def _matches_entry(entry, date) -> bool:
+    """Semana/paridade/data: once vale só em event_date; biweekly na paridade; dated override."""
+    rec = (entry.get("recurrence") or "weekly").strip().lower()
+    if rec == "once":
+        ed = entry.get("event_date")
+        return str(ed)[:10] == date.isoformat() if ed else False
+    if rec == "biweekly":
+        return True  # paridade verificada à parte quando week_parity presente
+    return True
+
+
+def _parity_ok(entry, date) -> bool:
+    wp = entry.get("week_parity")
+    if wp is None:
+        return True
+    try:
+        return int(wp) == _week_parity(date)
+    except (TypeError, ValueError):
+        return True
+
+
+def _effective_availability(date, availability) -> list:
+    """Regras datadas do dia sobrescrevem o padrão semanal (ex.: 'hoje de folga')."""
+    dated = [w for w in (availability or []) if (w.get("date") or "")[:10] == date.isoformat()]
+    if dated:
+        return dated
+    return [w for w in (availability or [])
+            if not w.get("date") and _parity_ok(w, date)]
+
+
+def _in_parent_window(slot_start, slot_end, availability, kind: str | None = None) -> bool:
+    """Slot contido numa janela do responsável (mesmo weekday), do kind pedido."""
+    for w in _effective_availability(slot_start.date(), availability):
+        try:
+            if kind is not None and (w.get("kind") or "available") != kind:
+                continue
             if int(w.get("weekday", -1)) != slot_start.weekday():
                 continue
             ws, we = _parse_hm(w["start_time"]), _parse_hm(w["end_time"])
@@ -95,14 +163,15 @@ def _in_parent_window(slot_start, slot_end, availability) -> bool:
     return False
 
 
-def _score(slot_start, slot_end, duration, homework, now, due, busy, availability=None) -> float:
+def _score(slot_start, slot_end, duration, homework, now, due, busy, availability=None,
+           shift: str | None = None) -> float:
     total_sec = max(1.0, (due - now).total_seconds())
     remain_sec = max(0.0, (due - slot_start).total_seconds())
     s = 30.0 * max(0.0, min(1.0, remain_sec / total_sec))
     # earlier is better: invert — quanto mais cedo após now, maior
     elapsed_sec = max(0.0, (slot_start - now).total_seconds())
     s += 0.0  # mantido p/ clareza; o termo acima já premia antecedência relativa
-    s = 30.0 * (1.0 - min(1.0, elapsed_sec / total_sec)) + 20.0 * _focus_factor(slot_start)
+    s = 30.0 * (1.0 - min(1.0, elapsed_sec / total_sec)) + 20.0 * _focus_factor(slot_start, shift)
     # fragmentação: +10 se longe de bloqueios, senão +4
     gap_ok = True
     for bs, be in busy:
@@ -112,8 +181,10 @@ def _score(slot_start, slot_end, duration, homework, now, due, busy, availabilit
             break
     s += 10.0 if gap_ok else 4.0
     s += 15.0 * (float(homework.get("priority", 1)) / 2.0)
-    if _in_parent_window(slot_start, slot_end, availability):
+    if _in_parent_window(slot_start, slot_end, availability, kind="available"):
         s += 12.0  # responsável disponível para acompanhar
+    if _in_parent_window(slot_start, slot_end, availability, kind="busy"):
+        s -= 25.0  # responsável trabalhando: evita, mas não inviabiliza
     if slot_start.date() == now.date() and duration > 45:
         s -= 15.0
     return max(0.0, min(100.0, s))
@@ -141,6 +212,7 @@ def suggest_slots(homework, schedules=None, activities=None, preferences=None, n
 
     max_per_day = int(prefs.get("max_slots_per_day", MAX_SLOTS_PER_DAY))
     q_start, q_end = _quiet()
+    shift = prefs.get("shift") or detect_shift(schedules)
 
     # 1. busy no horizonte (máx 14 dias)
     busy = []
@@ -155,22 +227,29 @@ def suggest_slots(homework, schedules=None, activities=None, preferences=None, n
         for ac in activities:
             if not ac.get("is_blocking", True):
                 continue
-            if int(ac.get("weekday", -1)) == wd:
-                busy.append(
-                    _to_interval(
-                        d, ac["start_time"], ac["end_time"], tz,
-                        delta_before=int(ac.get("travel_before_min", 0)),
-                        delta_after=int(ac.get("travel_after_min", 0)),
-                    )
+            if not _matches_entry(ac, d) or not _parity_ok(ac, d):
+                continue
+            awd = ac.get("weekday")
+            if awd is not None and int(awd) != wd:
+                continue
+            busy.append(
+                _to_interval(
+                    d, ac["start_time"], ac["end_time"], tz,
+                    delta_before=int(ac.get("travel_before_min", 0)),
+                    delta_after=int(ac.get("travel_after_min", 0)),
                 )
+            )
         d += timedelta(days=1)
     busy = _merge(busy)
 
-    # 2. candidatos
+    # 2. candidatos (vespertino: dia inteiro livre; motor esculpe a grade)
     candidates = []
     d = day
     while d <= last:
-        w_start_t, w_end_t = _study_window(datetime(d.year, d.month, d.day, tzinfo=tz), prefs)
+        if "study_window" not in prefs and shift == "vespertino":
+            w_start_t, w_end_t = _parse_hm("07:00"), _parse_hm("21:00")
+        else:
+            w_start_t, w_end_t = _study_window(datetime(d.year, d.month, d.day, tzinfo=tz), prefs)
         win_start = datetime(d.year, d.month, d.day, w_start_t.hour, w_start_t.minute, tzinfo=tz)
         win_end = datetime(d.year, d.month, d.day, w_end_t.hour, w_end_t.minute, tzinfo=tz)
         # quiet corta o fim; início nunca antes de 07:00
@@ -189,11 +268,13 @@ def suggest_slots(homework, schedules=None, activities=None, preferences=None, n
         while cur + timedelta(minutes=duration) <= win_end:
             s, e = cur, cur + timedelta(minutes=duration)
             if not any(_overlaps(s, e, bs, be) for bs, be in busy):
-                score = _score(s, e, duration, homework, now, due, busy, availability)
+                score = _score(s, e, duration, homework, now, due, busy, availability, shift)
                 days_left = (due.date() - s.date()).days
                 reason = f"Livre; entrega em {days_left}d; foco {'alto' if 14 <= s.hour < 18 else 'normal'}"
-                if _in_parent_window(s, e, availability):
+                if _in_parent_window(s, e, availability, kind="available"):
                     reason += "; responsável disponível"
+                if _in_parent_window(s, e, availability, kind="busy"):
+                    reason += "; responsável trabalhando (evitar)"
                 candidates.append({"start_at": s, "end_at": e, "score": round(score, 1), "reason": reason})
             cur += timedelta(minutes=GRID_MINUTES)
         d += timedelta(days=1)

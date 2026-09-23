@@ -594,7 +594,9 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
                 ]
             if availability is None:
                 availability = [
-                    {"weekday": w["weekday"], "start_time": w["start_time"], "end_time": w["end_time"]}
+                    {"weekday": w["weekday"], "start_time": w["start_time"], "end_time": w["end_time"],
+                     "kind": w.get("kind", "available"), "week_parity": w.get("week_parity"),
+                     "date": w.get("date")}
                     for w in _R.list_availability(child_id)
                 ]
         except Exception:
