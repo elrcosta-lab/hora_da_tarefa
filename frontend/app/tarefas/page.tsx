@@ -138,7 +138,27 @@ export default function TarefasPage() {
     if (!detail) return;
     setBusy(true);
     try {
-      await api(`/homeworks/${detail.id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+      // caminha a FSM até o alvo (ex.: pendente → em_andamento → concluída)
+      const path: string[] =
+        status === "concluida"
+          ? ["agendada", "em_andamento", "concluida"]
+          : status === "arquivada"
+            ? ["agendada", "em_andamento", "concluida", "arquivada"]
+            : [status];
+      let lastError: unknown = null;
+      for (const st of path) {
+        try {
+          await api(`/homeworks/${detail.id}/status`, { method: "PATCH", body: JSON.stringify({ status: st }) });
+          if (st === status) {
+            lastError = null;
+            break;
+          }
+          lastError = null;
+        } catch (err) {
+          lastError = err;
+        }
+      }
+      if (lastError) throw lastError;
       await openDetail(detail.id);
       await load();
     } catch (err) {

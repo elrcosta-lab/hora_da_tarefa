@@ -605,7 +605,15 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
             availability = availability or []
     tz = ZoneInfo("America/Sao_Paulo")
     now = now or _dt.now(tz)
-    due = _parse_due(rec.get("due_at"), tz) or (now + __import__("datetime").timedelta(days=7))
+    due = _parse_due(rec.get("due_at"), tz)
+    due_inferred = False
+    if due is None and rec.get("subject"):
+        # fallback p/ tarefas antigas (extraídas antes da inferência): não persiste,
+        # só ancora o horizonte; a confirmação continua na revisão
+        inferred = infer_due_from_grade(rec.get("child_id"), rec.get("subject"), now=now)
+        if inferred is not None:
+            due, due_inferred = inferred, True
+    due = due or (now + __import__("datetime").timedelta(days=7))
     hw = {
         "due_at": due,
         "estimated_minutes": int(rec.get("estimated_minutes") or 30),
@@ -614,7 +622,7 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
     }
     slots = suggest_slots(hw, schedules=schedules or [], activities=activities or [],
                           availability=availability or [], now=now, limit=limit)
-    return [
+    out = [
         {
             "rank": s["rank"],
             "start_at": s["start_at"].isoformat(),
@@ -624,6 +632,9 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
         }
         for s in slots
     ]
+    if due_inferred and out:
+        out[0]["reason"] += "; entrega inferida da grade (confirme na revisão)"
+    return out
 
 
 def accept_suggestion(homework_id: str, start_at_iso: str) -> dict:

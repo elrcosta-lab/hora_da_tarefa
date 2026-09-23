@@ -277,6 +277,43 @@ def test_explicit_nulls_fall_back_to_defaults():
     assert (a.recurrence, a.travel_before_min, a.travel_after_min, a.is_blocking) == ("weekly", 0, 0, True)
 
 
+def test_suggestions_fallback_infers_due_for_legacy_tasks():
+    import io
+    import uuid
+    from datetime import datetime
+    from unittest.mock import patch
+    from zoneinfo import ZoneInfo
+
+    from PIL import Image
+
+    from app.schemas.extraction import ExtractionResult
+    from app.tasks import routine as R
+    from app.tasks.extract import get_suggestions
+
+    c = _client()
+    h, _ = make_auth(c)
+    cid = c.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    no_date = ExtractionResult(is_homework=True, subject="Matemática", title="Lista",
+                               statement="Ex", due_at=None, estimated_minutes=30,
+                               priority=1, confidence=0.9, needs_review=False,
+                               extraction_status="ok", meta={})
+    img = Image.new("RGB", (800, 600), (4, 4, 4))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    with patch("app.services.vision_openrouter.extract_homework", return_value=no_date):
+        hid = c.post("/v1/homeworks/upload",
+                     files={"file": (f"{uuid.uuid4()}.jpg", buf.getvalue(), "image/jpeg")},
+                     data={"child_id": cid}, headers=h).json()["homework_id"]
+    # grade cadastrada DEPOIS (tarefa legada, sem due): fallback ancora na próxima aula (qua 23/09)
+    R.save_schedules(cid, [{"weekday": 2, "start_time": "07:30", "end_time": "08:20",
+                            "subject": "Matemática"}], replace=True)
+    sugs = get_suggestions(hid, limit=5,
+                           now=datetime(2026, 9, 22, 10, 0, tzinfo=ZoneInfo("America/Sao_Paulo")))
+    assert sugs
+    assert all(s["end_at"][:10] <= "2026-09-23" for s in sugs)
+    assert "inferida da grade" in sugs[0]["reason"]
+
+
 def test_import_forbidden_cross_account():
     c = _client()
     h, cid = _auth(c)
