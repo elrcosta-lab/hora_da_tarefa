@@ -95,7 +95,9 @@ def _get_client(settings: Settings):
     return OpenAI(base_url=settings.OPENROUTER_BASE_URL, api_key=settings.OPENROUTER_API_KEY)
 
 
-def _parse_json_content(content: str) -> dict:
+def _parse_json_content(content: str | None) -> dict:
+    if not content or not content.strip():
+        raise ValueError("empty content (truncado? aumente OPENROUTER_MAX_TOKENS)")
     text = content.strip()
     if text.startswith("```"):
         # remove cercas markdown caso o modelo desobedeça "só JSON"

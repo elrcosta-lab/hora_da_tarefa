@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     OPENROUTER_SITE_URL: str = "https://horadatarefa.app"
     OPENROUTER_APP_NAME: str = "Hora da Tarefa"
     OPENROUTER_TIMEOUT_SECONDS: int = 60
-    OPENROUTER_MAX_TOKENS: int = 1024
+    OPENROUTER_MAX_TOKENS: int = 2048
     OPENROUTER_TEMPERATURE: float = 0.1
     OPENROUTER_REASONING_EFFORT: str = "low"
 
