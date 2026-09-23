@@ -68,7 +68,7 @@ def test_extract_calls_openrouter_with_nex_free_and_parses_json():
     assert kwargs["model"] == "nex-agi/nex-n2.5-mini"
     assert kwargs["response_format"] == {"type": "json_object"}
     assert kwargs["temperature"] == 0.1
-    assert kwargs["max_tokens"] == 2048
+    assert kwargs["max_tokens"] == 4096
     assert kwargs["extra_body"] == {"reasoning": {"effort": "low"}}
     assert "reasoning" not in kwargs  # nunca top-level: SDK rejeita (TypeError ao vivo)
     # imagem vai em data-URL base64, nunca o original com EXIF
