@@ -148,6 +148,31 @@ def test_llm_payload_uses_smaller_image():
     assert max(img.size) <= 1024
 
 
+def test_agenda_shape_normalizes_first_task():
+    """Foto de agenda (várias matérias) vira a 1ª tarefa + needs_review (formato observado ao vivo)."""
+    import json
+    from unittest.mock import MagicMock
+
+    from app.services.vision_openrouter import extract_homework
+
+    agenda = {"data": "21/09/2026 - Segunda-Feira", "turma": "4º Ano - B",
+              "tarefas": [{"disciplina": "Ciências", "assunto": "A decomposição",
+                           "tarefa": "Livro didático, páginas 45 e 46"}],
+              "confidence": 0.8}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=json.dumps(agenda)))],
+        usage=MagicMock(prompt_tokens=400, completion_tokens=300),
+    )
+    result = extract_homework(_make_test_image(800, 600), client=mock_client)
+    assert result.is_homework is True
+    assert result.subject == "Ciências"
+    assert result.due_at == "2026-09-21"
+    assert "45 e 46" in (result.statement or "")
+    assert result.needs_review is True
+    assert result.extraction_status == "baixa_confianca"
+
+
 def test_chat_kwargs_accepted_by_real_sdk_signature():
     """Regressão: kwargs enviados precisam existir na assinatura real do SDK (mocks escondem TypeError)."""
     import inspect

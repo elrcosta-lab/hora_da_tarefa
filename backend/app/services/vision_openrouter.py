@@ -321,6 +321,42 @@ def extract_routine(text: str | None = None, image_bytes: bytes | None = None,
         raise ExtractionFailed(f"VALIDATION_ERROR: {exc}") from exc
 
 
+def _normalize_agenda_shape(data: dict) -> dict | None:
+    """Agenda do dia (várias matérias) → primeira tarefa no nosso schema.
+
+    Observado ao vivo: o modelo descreve a página inteira em vez de uma tarefa
+    ({"data": "21/09/2026", "turma": ..., "tarefas": [{disciplina, tarefa, ...}]}).
+    Mapeia a 1ª tarefa e sinaliza needs_review (humano confirma o resto).
+    Retorna None se o formato não for agenda.
+    """
+    import re
+
+    tarefas = data.get("tarefas")
+    if not isinstance(tarefas, list) or not tarefas:
+        return None
+    first = next((t for t in tarefas if isinstance(t, dict)), None)
+    if first is None:
+        return None
+    due = None
+    m = re.search(r"(\d{2})/(\d{2})/(\d{4})", str(data.get("data") or ""))
+    if m:
+        due = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
+    subject = (first.get("disciplina") or data.get("subject") or "Outro").strip() or "Outro"
+    task = (first.get("tarefa") or "").strip()
+    topic = (first.get("assunto") or "").strip()
+    statement = " — ".join(p for p in (task, topic) if p) or None
+    title = (topic or task).strip()
+    title = " ".join(title.split()[:8]) or "Tarefa da agenda"
+    try:
+        conf = float(data.get("confidence", 0.6))
+    except (TypeError, ValueError):
+        conf = 0.6
+    return {"is_homework": True, "subject": subject, "title": title or "Tarefa da agenda",
+            "statement": statement, "due_at": due, "estimated_minutes": None,
+            "priority": 1, "confidence": min(max(conf, 0.0), 1.0), "needs_review": True,
+            "_normalized_from": "agenda"}
+
+
 def extract_homework(
     image_bytes: bytes,
     hint_text: str | None = None,
@@ -379,6 +415,11 @@ def extract_homework(
         data = _parse_json_content(content)
     except Exception as exc:
         raise ExtractionFailed(f"INVALID_JSON: {exc}") from exc
+
+    if "subject" not in data and "is_homework" not in data:
+        agenda = _normalize_agenda_shape(data)
+        if agenda is not None:
+            data = agenda
 
     usage = getattr(resp, "usage", None)
     meta = {
