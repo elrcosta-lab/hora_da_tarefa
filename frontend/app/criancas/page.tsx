@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, getAccess } from "@/lib/api";
+import { ApiError, api, getAccess } from "@/lib/api";
 import Sidebar from "@/components/Sidebar";
 
 type Child = { id: string; name: string; grade_level?: string | null };
@@ -141,14 +141,32 @@ export default function CriancasPage() {
     setBusy(true);
     setMsg(null);
     try {
-      const form = new FormData();
-      if (impText.trim()) form.append("text", impText.trim());
-      if (impFile) form.append("file", impFile);
-      form.append("replace", String(impReplace));
-      const r = await api<{
-        schedules_created: number; activities_created: number; availability_saved: number;
-        needs_review: boolean; warnings: string[];
-      }>(`/children/${childId}/routine/import`, { method: "POST", body: form });
+      const build = () => {
+        const form = new FormData();
+        if (impText.trim()) form.append("text", impText.trim());
+        if (impFile) form.append("file", impFile);
+        form.append("replace", String(impReplace));
+        return form;
+      };
+      let r;
+      try {
+        r = await api<{
+          schedules_created: number; activities_created: number; availability_saved: number;
+          needs_review: boolean; warnings: string[];
+        }>(`/children/${childId}/routine/import`, { method: "POST", body: build() });
+      } catch (err) {
+        // provider intermitente → 1 retentativa automática antes de pedir ação
+        if (err instanceof ApiError && err.retryable) {
+          setMsg("A IA hesitou — tentando de novo automaticamente… 🔄");
+          await new Promise((res) => setTimeout(res, 3000));
+          r = await api<{
+            schedules_created: number; activities_created: number; availability_saved: number;
+            needs_review: boolean; warnings: string[];
+          }>(`/children/${childId}/routine/import`, { method: "POST", body: build() });
+        } else {
+          throw err;
+        }
+      }
       setImpText("");
       setImpFile(null);
       await loadAgenda(childId);
@@ -197,7 +215,7 @@ export default function CriancasPage() {
                   <input type="checkbox" checked={impReplace} onChange={(e) => setImpReplace(e.target.checked)} style={{ minHeight: 24, width: 24 }} />
                   Substituir atual
                 </label>
-                <button className="btn-primary" disabled={busy}>Importar rotina</button>
+                <button className="btn-primary" disabled={busy || (!impText.trim() && !impFile)}>Importar rotina</button>
               </div>
             </form>
           </div>

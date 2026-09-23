@@ -45,6 +45,17 @@ async function refresh(): Promise<boolean> {
   return true;
 }
 
+export class ApiError extends Error {
+  code: string;
+  status: number;
+  retryable: boolean;
+  constructor(message: string, code = "UNKNOWN", status = 0, retryable = false) {
+    super(message);
+    this.code = code;
+    this.status = status;
+    this.retryable = retryable;
+  }
+}
 export async function api<T>(path: string, init: RequestInit = {}, retry = true): Promise<T> {
   const headers: Record<string, string> = { ...(init.headers as Record<string, string>) };
   const token = getAccess();
@@ -56,7 +67,12 @@ export async function api<T>(path: string, init: RequestInit = {}, retry = true)
   }
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
-    throw new Error(err?.error?.message || `HTTP ${r.status}`);
+    throw new ApiError(
+      err?.error?.message || `HTTP ${r.status}`,
+      err?.error?.code || "UNKNOWN",
+      r.status,
+      err?.error?.details?.retryable === true
+    );
   }
   return r.json() as Promise<T>;
 }
