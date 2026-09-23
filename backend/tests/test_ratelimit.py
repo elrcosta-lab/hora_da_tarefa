@@ -68,6 +68,22 @@ def test_login_bruteforce_blocked():
     assert last.json()["error"]["code"] == "RATE_LIMITED"
 
 
+def test_proxy_headers_middleware_installed():
+    """A1: sem ele, atrás do Caddy todo IP vira o do proxy e o anti-brute-force é fictício."""
+    from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+    from app.main import app
+
+    found = [m for m in app.user_middleware
+             if m.cls is ProxyHeadersMiddleware or
+             getattr(getattr(m, "cls", None), "__name__", "") == "ProxyHeadersMiddleware"]
+    assert found, "ProxyHeadersMiddleware ausente"
+    entry = found[0]
+    opts = getattr(entry, "options", None) or getattr(entry, "kwargs", None) or {}
+    trusted = opts.get("trusted_hosts", [])
+    assert any("172.16" in str(t) or "10.0" in str(t) for t in trusted)
+
+
 def test_global_limit_per_user(monkeypatch):
     monkeypatch.setenv("RATE_GLOBAL_PER_MIN", "5")
     from app.main import app

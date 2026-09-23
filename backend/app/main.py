@@ -33,6 +33,14 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Hora da Tarefa", version="1.1.0", lifespan=lifespan)
 
+# A1: atrás do Caddy, o IP real vem em X-Forwarded-For — sem isso, todos os
+# rate limits por IP compartilham a mesma chave (anti-brute-force fictício).
+# Só confia em proxies das redes privadas + loopback.
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
+
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=["127.0.0.1", "10.0.0.0/8",
+                                                          "172.16.0.0/12", "192.168.0.0/16"])
+
 _origins = [o.strip() for o in os.environ.get(
     "CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if o.strip()]
 app.add_middleware(
