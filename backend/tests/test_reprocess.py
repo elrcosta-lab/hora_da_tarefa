@@ -67,6 +67,9 @@ def test_reprocess_endpoint_reruns_extraction():
     assert r6.status_code == 429
     assert r6.json()["error"]["code"] == "RATE_LIMITED"
 
+    from app.core.ratelimit import get_limiter
+
+    get_limiter().reset()  # isola o restante do teste do teto acima
     with patch("app.services.vision_openrouter.extract_homework", return_value=_ok_result()):
         r = client.post(f"/v1/homeworks/{hid}/reprocess", headers=h)
         assert r.status_code == 202, r.text
