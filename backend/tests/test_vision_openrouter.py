@@ -83,6 +83,7 @@ def test_extract_calls_openrouter_with_nex_free_and_parses_json():
     assert result.confidence == pytest.approx(0.91)
     assert result.needs_review is False
     assert result.meta["engine"] == "nex-agi/nex-n2.5-mini"
+    assert mock_client.chat.completions.create.call_count == 1  # sem duplicar custo
 
 
 def test_low_confidence_marks_needs_review():

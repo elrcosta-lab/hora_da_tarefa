@@ -367,7 +367,6 @@ def _parse_with_retry(client, settings, messages):
         return resp, data, usages
     except Exception as exc:
         if "empty content" in str(exc):
-            usages.append(getattr(resp, "usage", None))
             try:
                 resp = _chat_json(client, settings, messages)
                 usages.append(getattr(resp, "usage", None))
@@ -415,20 +414,6 @@ def extract_homework(
     if client is None:
         client = _get_client(settings)
         own_client = True
-    try:
-        resp = _chat_json(client, settings, messages)
-    except OpenRouterRateLimited:
-        raise
-    except ExtractionFailed:
-        raise
-    except Exception as exc:
-        raise ExtractionFailed(str(exc)) from exc
-    finally:
-        if own_client:
-            try:
-                client.close()
-            except Exception:
-                pass
 
     usages: list = []
     try:
