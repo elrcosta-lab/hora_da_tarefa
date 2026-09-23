@@ -228,8 +228,7 @@ def extract_routine(text: str | None = None, image_bytes: bytes | None = None,
     if own_client:
         client = _get_client(settings)
     try:
-        resp = _chat_json(client, settings, [{"role": "user", "content": parts}])
-        data = _parse_json_content(resp.choices[0].message.content)
+        _, data, _ = _parse_with_retry(client, settings, [{"role": "user", "content": parts}])
     except (OpenRouterRateLimited, ExtractionFailed):
         raise
     except Exception as exc:
@@ -357,6 +356,27 @@ def _normalize_agenda_shape(data: dict) -> dict | None:
             "_normalized_from": "agenda"}
 
 
+def _parse_with_retry(client, settings, messages):
+    """Parseia a resposta; em conteúdo vazio (quirk intermitente do provider),
+    retenta 1× e soma usages. Retorna (resp, data, usages)."""
+    usages: list = []
+    try:
+        resp = _chat_json(client, settings, messages)
+        usages.append(getattr(resp, "usage", None))
+        data = _parse_json_content(resp.choices[0].message.content)
+        return resp, data, usages
+    except Exception as exc:
+        if "empty content" in str(exc):
+            usages.append(getattr(resp, "usage", None))
+            try:
+                resp = _chat_json(client, settings, messages)
+                usages.append(getattr(resp, "usage", None))
+                return resp, _parse_json_content(resp.choices[0].message.content), usages
+            except Exception as exc2:
+                raise ExtractionFailed(f"INVALID_JSON: {exc2}") from exc2
+        raise
+
+
 def extract_homework(
     image_bytes: bytes,
     hint_text: str | None = None,
@@ -410,11 +430,19 @@ def extract_homework(
             except Exception:
                 pass
 
+    usages: list = []
     try:
-        content = resp.choices[0].message.content
-        data = _parse_json_content(content)
+        resp, data, usages = _parse_with_retry(client, settings, messages)
+    except (OpenRouterRateLimited, ExtractionFailed):
+        raise
     except Exception as exc:
         raise ExtractionFailed(f"INVALID_JSON: {exc}") from exc
+    finally:
+        if own_client:
+            try:
+                client.close()
+            except Exception:
+                pass
 
     if "subject" not in data and "is_homework" not in data:
         agenda = _normalize_agenda_shape(data)
@@ -422,11 +450,13 @@ def extract_homework(
             data = agenda
 
     usage = getattr(resp, "usage", None)
+    prompt_tokens = sum(int(getattr(u, "prompt_tokens", 0) or 0) for u in usages if u is not None)
+    completion_tokens = sum(int(getattr(u, "completion_tokens", 0) or 0) for u in usages if u is not None)
     meta = {
         "engine": settings.OPENROUTER_MODEL,
         "provider": "openrouter",
-        "prompt_tokens": getattr(usage, "prompt_tokens", None),
-        "completion_tokens": getattr(usage, "completion_tokens", None),
+        "prompt_tokens": prompt_tokens or getattr(usage, "prompt_tokens", None),
+        "completion_tokens": completion_tokens or getattr(usage, "completion_tokens", None),
         "image_sha256": sha,
     }
 

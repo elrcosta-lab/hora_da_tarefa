@@ -173,6 +173,29 @@ def test_agenda_shape_normalizes_first_task():
     assert result.extraction_status == "baixa_confianca"
 
 
+def test_empty_content_retries_once_then_succeeds():
+    """Quirk do provider (content None): 1 retry imediato; usages somados."""
+    import json
+    from unittest.mock import MagicMock
+
+    from app.services.vision_openrouter import extract_homework
+
+    ok = {"is_homework": True, "subject": "Matemática", "title": "T", "statement": "S",
+          "due_at": "2026-09-25", "estimated_minutes": 30, "priority": 1,
+          "confidence": 0.9, "needs_review": False}
+    empty = MagicMock(choices=[MagicMock(message=MagicMock(content=None))],
+                      usage=MagicMock(prompt_tokens=400, completion_tokens=900))
+    good = MagicMock(choices=[MagicMock(message=MagicMock(content=json.dumps(ok)))],
+                     usage=MagicMock(prompt_tokens=400, completion_tokens=100))
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.side_effect = [empty, good]
+    result = extract_homework(_make_test_image(800, 600), client=mock_client)
+    assert result.subject == "Matemática"
+    assert mock_client.chat.completions.create.call_count == 2
+    assert result.meta["prompt_tokens"] == 800
+    assert result.meta["completion_tokens"] == 1000
+
+
 def test_chat_kwargs_accepted_by_real_sdk_signature():
     """Regressão: kwargs enviados precisam existir na assinatura real do SDK (mocks escondem TypeError)."""
     import inspect
