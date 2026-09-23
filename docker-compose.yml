@@ -77,6 +77,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:?TELEGRAM_BOT_TOKEN ausente no .env}
       TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-change-me}
       TELEGRAM_LIVE_SEND: "true"
+      TELEGRAM_POLLING: ${TELEGRAM_POLLING:-false}
     networks: [internal, web]
     deploy:
       resources:
