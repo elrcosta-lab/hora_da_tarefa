@@ -17,5 +17,8 @@ COPY --from=builder /app/package.json /app/package-lock.json ./
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder /app/public ./public
+# A7: nunca como root
+RUN addgroup -S app && adduser -S app -G app && chown -R app:app /app
+USER app
 EXPOSE 3000
 CMD ["node", "server.js"]
