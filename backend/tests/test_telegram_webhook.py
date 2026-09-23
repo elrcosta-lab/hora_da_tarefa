@@ -131,6 +131,27 @@ def test_start_linked_shows_welcome_back_not_code():
     assert "Pai" in sent or "tarefa" in sent.lower()
 
 
+def test_hoje_shows_child_name_without_subject():
+    from app.tasks import routine as R
+    from app.tasks.extract import get_or_create_homework
+
+    linked = _link(12)
+    kid = R.create_child("Bia", owner_user_id=linked["user_id"])
+    get_or_create_homework(b"bytes-sem-extracao", child_id=kid["id"],
+                           created_by_user_id=linked["user_id"])
+    c = _client()
+    r = c.post("/v1/telegram/webhook", headers=_headers(), json={
+        "update_id": 42,
+        "message": {"message_id": 6, "from": {"id": 12}, "chat": {"id": 12}, "text": "/hoje"},
+    })
+    assert r.status_code == 200
+    from app.bot.handlers import last_sent
+
+    sent = last_sent(12) or ""
+    assert "Bia" in sent
+    assert "? —" not in sent
+
+
 def test_concluir_command_updates_status():
     from tests.conftest import make_auth
 

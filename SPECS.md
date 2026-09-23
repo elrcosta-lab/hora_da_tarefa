@@ -969,8 +969,8 @@ rechama a API. `GET /v1/usage` soma tokens e estima US$ por conta
 | Comando | Descrição | Resposta |
 |---|---|---|
 | `/start` | Boas-vindas + vínculo | Se sem vínculo, pede código de pareamento; senão mostra menu. |
-| `/tarefas` | Lista tarefas ativas | Lista com status e prazo; botões inline por item. |
-| `/hoje` | Agenda do dia | Slots agendados de hoje por criança. |
+| `/tarefas` | Lista tarefas ativas | Linhas `• {{child_name}} · {{subject ou "Sem matéria"}} — {{title ou id}} [{{status}}]`. |
+| `/hoje` | Agenda do dia | Mesmo formato de linha do `/tarefas`; nunca exibe `?`. |
 | `/concluir <id>` | Marca concluída | Atalho; também via botão "Concluir". |
 | `/criancas` | Lista/troca criança | Define contexto ao enviar foto. |
 | `/ajuda` | Ajuda | Lista comandos. |

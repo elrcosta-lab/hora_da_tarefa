@@ -138,6 +138,24 @@ def _render_dedupe(rec: dict) -> str:
             f"Concluiu? /concluir {rec['homework_id'][:8]}")
 
 
+def _render_task_line(r: dict, child_names: dict) -> str:
+    """Linha de tarefa p/ /hoje e /tarefas: criança · matéria — título (sem '?')."""
+    kid = child_names.get(r.get("child_id") or "", "Sem criança")
+    subject = r.get("subject") or "Sem matéria"
+    title = r.get("title") or r["homework_id"][:8]
+    status = f" [{r.get('status')}]" if r.get("status") else ""
+    return f"• {kid} · {subject} — {title}{status}"
+
+
+def _child_names(owner_user_id: str | None) -> dict:
+    from app.tasks import routine as R
+
+    try:
+        return {k["id"]: k["name"] for k in R.list_children(owner_user_id=owner_user_id)}
+    except Exception:
+        return {}
+
+
 def _resolve_user(telegram_user_id: int) -> dict | None:
     from app.tasks import users as U
 
@@ -301,7 +319,7 @@ def handle_update(update: dict) -> dict:
         if not actives:
             _send(chat_id, "Nenhuma tarefa ativa. 🎉")
         else:
-            lines = [f"• {(r.get('subject') or '?')} — {(r.get('title') or r['homework_id'][:8])} [{r.get('status')}]" for r in actives[:10]]
+            lines = [_render_task_line(r, _child_names(owner)) for r in actives[:10]]
             _send(chat_id, "Tarefas ativas:\n" + "\n".join(lines))
         return {"ok": True}
     if text.startswith("/hoje"):
@@ -311,7 +329,7 @@ def handle_update(update: dict) -> dict:
         if not actives:
             _send(chat_id, "Hoje está livre. Nenhuma tarefa agendada. 🎉")
         else:
-            lines = [f"• {(r.get('subject') or '?')} — {(r.get('title') or r['homework_id'][:8])}" for r in actives[:10]]
+            lines = [_render_task_line(r, _child_names(owner)) for r in actives[:10]]
             _send(chat_id, "Agenda de hoje:\n" + "\n".join(lines))
         return {"ok": True}
     if text.startswith("/concluir"):
