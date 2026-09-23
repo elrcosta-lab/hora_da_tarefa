@@ -117,7 +117,10 @@ def test_atraso_scheduled_when_overdue_and_list_endpoint():
 
     c = _client()
     h, cid = _setup(c)
-    hid = _upload_with_due(c, h, cid, due="2020-01-01")
+    hid = _upload_with_due(c, h, cid, due="2026-09-25")
+    from app.tasks.extract import update_homework_fields
+
+    update_homework_fields(hid, due_at="2020-01-01")  # vencida só por edição manual
     N.schedule_for_homework(hid)
     kinds = {r["kind"] for r in N.list_notifications(homework_id=hid)}
     assert "atraso" in kinds

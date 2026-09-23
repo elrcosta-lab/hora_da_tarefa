@@ -47,6 +47,11 @@ async def telegram_webhook(
     except Exception:
         return JSONResponse(status_code=200, content={"ok": True})
     result = handle_update(update if isinstance(update, dict) else {})
+    hid = result.get("homework_id")
+    if hid and not result.get("deduplicated"):
+        from app.tasks.extract import run_extraction
+
+        background.add_task(run_extraction, hid)
     if settings.TELEGRAM_LIVE_SEND:
         background.add_task(flush_outbox_to_telegram)
     return JSONResponse(status_code=200, content=result)

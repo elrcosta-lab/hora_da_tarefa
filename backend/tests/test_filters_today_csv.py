@@ -64,8 +64,13 @@ def test_filters_combine_status_subject_q_period_sort():
 
     client = TestClient(app)
     h, cid = _setup(client)
-    h1 = _upload(client, h, cid, seed=1, subject="Matemática", title="Lista de frações", due_at="2026-09-25")
-    _upload(client, h, cid, seed=2, subject="Português", title="Redação sustentabilidade", due_at="2026-09-20")
+    from app.tasks.extract import update_homework_fields
+
+    # uploads com due futuro (extração rejeita passado); cenário fixo via edição manual
+    h1 = _upload(client, h, cid, seed=1, subject="Matemática", title="Lista de frações", due_at="2099-01-01")
+    h2 = _upload(client, h, cid, seed=2, subject="Português", title="Redação sustentabilidade", due_at="2099-01-01")
+    update_homework_fields(h1, due_at="2026-09-25")
+    update_homework_fields(h2, due_at="2026-09-20")
     h3 = _upload(client, h, cid, seed=3, subject="Matemática", title="Prova final", due_at="2026-09-28")
     client.patch(f"/v1/homeworks/{h3}/status", json={"status": "agendada"}, headers=h)
     client.patch(f"/v1/homeworks/{h3}/status", json={"status": "em_andamento"}, headers=h)
@@ -95,10 +100,12 @@ def test_today_aggregates_due_overdue_scheduled():
 
     client = TestClient(app)
     h, cid = _setup(client)
-    hid_today = _upload(client, h, cid, seed=11, due_at="2026-09-22", title="Para hoje")
-    hid_late = _upload(client, h, cid, seed=12, due_at="2020-01-01", title="Atrasada")
-    from app.tasks.extract import transition_homework
+    hid_today = _upload(client, h, cid, seed=11, due_at="2099-01-01", title="Para hoje")
+    hid_late = _upload(client, h, cid, seed=12, due_at="2099-01-01", title="Atrasada")
+    from app.tasks.extract import transition_homework, update_homework_fields
 
+    update_homework_fields(hid_today, due_at="2026-09-22")
+    update_homework_fields(hid_late, due_at="2020-01-01")  # vencida só por edição manual
     transition_homework(hid_late, "atrasada")
     r = client.get("/v1/homeworks/today", params={"date": "2026-09-22"}, headers=h)
     assert r.status_code == 200, r.text

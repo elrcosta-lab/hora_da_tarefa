@@ -114,6 +114,43 @@ def test_photo_oversize_rejected_without_creating():
     assert "grande" in (last_sent(605) or "").lower()
 
 
+def test_photo_dedupe_replies_with_summary():
+    import base64
+    import io
+    import uuid
+    from unittest.mock import patch
+
+    from PIL import Image
+
+    from app.schemas.extraction import ExtractionResult
+
+    _link(606)
+    c = _client()
+    from app.bot.handlers import last_sent
+
+    img = Image.new("RGB", (840, 620), (9, 9, 9))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    ok = ExtractionResult(is_homework=True, subject="Matemática", title="Lista",
+                          statement="Ex", due_at="2026-09-25", estimated_minutes=30,
+                          priority=1, confidence=0.9, needs_review=False,
+                          extraction_status="ok", meta={})
+    payload = {"update_id": 204,
+               "message": {"message_id": 1, "from": {"id": 606}, "chat": {"id": 606},
+                           "photo": [{"file_id": "dup"}], "test_bytes_b64": b64}}
+    with patch("app.services.vision_openrouter.extract_homework", return_value=ok):
+        c.post("/v1/telegram/webhook", headers=_headers(), json=payload)
+        payload2 = dict(payload, update_id=205)
+        r = c.post("/v1/telegram/webhook", headers=_headers(), json=payload2)
+    assert r.status_code == 200
+    assert r.json().get("deduplicated") is True
+    sent = last_sent(606) or ""
+    assert "já está registrada" in sent
+    assert "Matemática" in sent
+    assert "/concluir" in sent
+
+
 def test_live_flush_calls_send_message(monkeypatch):
     import app.bot.handlers as H
 

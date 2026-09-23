@@ -65,10 +65,13 @@ def _make_overdue_homework(client, user_id, due="2020-01-01"):
                           due_at=due, estimated_minutes=30, priority=1,
                           confidence=0.9, needs_review=False, extraction_status="ok", meta={})
     with patch("app.services.vision_openrouter.extract_homework", return_value=ok):
-        from app.tasks.extract import get_or_create_homework, run_extraction
+        from app.tasks.extract import get_or_create_homework, run_extraction, update_homework_fields
 
         rec, _ = get_or_create_homework(_jpeg(), child_id=cid, created_by_user_id=user_id)
         run_extraction(rec["homework_id"])
+    # data passada só entra por edição manual (extração rejeita); simula tarefa vencida
+    if due and due < "2026-01-01":
+        update_homework_fields(rec["homework_id"], due_at=due)
     return rec["homework_id"]
 
 

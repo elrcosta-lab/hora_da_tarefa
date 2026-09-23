@@ -314,6 +314,39 @@ def test_suggestions_fallback_infers_due_for_legacy_tasks():
     assert "inferida da grade" in sugs[0]["reason"]
 
 
+def test_past_due_rejected_and_inferred_from_grade():
+    import io
+    import uuid
+    from unittest.mock import patch
+
+    from PIL import Image
+
+    from app.schemas.extraction import ExtractionResult
+    from app.tasks import routine as R
+    from app.tasks.extract import get_homework
+
+    c = _client()
+    h, _ = make_auth(c)
+    cid = c.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    R.save_schedules(cid, [{"weekday": 3, "start_time": "13:00", "end_time": "17:20",
+                            "subject": "Matemática"}], replace=True)
+    past = ExtractionResult(is_homework=True, subject="Matemática", title="T",
+                            statement="Ex", due_at="2026-05-30", estimated_minutes=30,
+                            priority=1, confidence=0.95, needs_review=False,
+                            extraction_status="ok", meta={})
+    img = Image.new("RGB", (800, 600), (6, 6, 6))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    with patch("app.services.vision_openrouter.extract_homework", return_value=past):
+        hid = c.post("/v1/homeworks/upload",
+                     files={"file": (f"{uuid.uuid4()}.jpg", buf.getvalue(), "image/jpeg")},
+                     data={"child_id": cid}, headers=h).json()["homework_id"]
+    rec = get_homework(hid)
+    assert rec["due_at"] is not None and rec["due_at"][:10] != "2026-05-30"
+    assert rec["needs_review"] is True
+    assert rec["extraction_json"]["meta"]["due_rejected"] == "2026-05-30"
+
+
 def test_import_forbidden_cross_account():
     c = _client()
     h, cid = _auth(c)

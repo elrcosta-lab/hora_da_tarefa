@@ -304,6 +304,14 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
         hw.extraction_confidence = result.confidence
         hw.extraction_status = result.extraction_status
         hw.extraction_json = result.model_dump()
+        if hw.due_at is not None and _to_utc_naive(hw.due_at) < _to_utc_naive(
+                datetime.now(timezone.utc)):
+            # data passada alucinada/errada: descarta e cai na inferência abaixo
+            hw.due_at = None
+            hw.extraction_status = "baixa_confianca"
+            meta = dict((hw.extraction_json or {}).get("meta", {}))
+            meta["due_rejected"] = result.due_at
+            hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
         if hw.due_at is None and hw.subject:
             inferred = infer_due_from_grade(hw.child_id, hw.subject)
             if inferred is not None:

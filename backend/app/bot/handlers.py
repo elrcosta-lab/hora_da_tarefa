@@ -120,6 +120,21 @@ RESTRICTED_MSG = (
 )
 
 
+def _render_dedupe(rec: dict) -> str:
+    """Reenvio: mostra o estado atual em vez de 'processando' genérico."""
+    subject = rec.get("subject") or "tarefa"
+    title = rec.get("title") or "sem título"
+    status = rec.get("status") or "pendente"
+    if rec.get("extraction_status") == "processando":
+        return f"Essa foto já foi registrada ({subject} — {title}). Ainda analisando… ⏳"
+    due = rec.get("due_at") or "a confirmar"
+    sched = rec.get("scheduled_start")
+    extra = f"\nAgendada para: {sched[:16].replace('T', ' ')}" if sched else ""
+    return (f"Essa foto já está registrada:\n{subject} — {title}\n"
+            f"Status: {status} · Entrega: {str(due)[:10]}{extra}\n"
+            f"Concluiu? /concluir {rec['homework_id'][:8]}")
+
+
 def _resolve_user(telegram_user_id: int) -> dict | None:
     from app.tasks import users as U
 
@@ -246,7 +261,7 @@ def handle_update(update: dict) -> dict:
             created_by_user_id=(user or {}).get("user_id"),
         )
         if dedup:
-            _send(chat_id, "Essa foto já foi registrada. Estou processando. ⏳")
+            _send(chat_id, _render_dedupe(rec))
         else:
             _send(chat_id, "Recebi! Analisando... status: processando. ⏳")
         return {"ok": True, "homework_id": rec["homework_id"], "deduplicated": dedup}
