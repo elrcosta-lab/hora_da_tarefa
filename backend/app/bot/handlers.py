@@ -56,15 +56,18 @@ def _ensure_child(owner_user_id: str | None = None):
 
 def _extract_photo_bytes(message: dict, token: str | None = None) -> bytes:
     import base64 as _b64
+    import os as _os
 
     from app.bot import telegram_api as _tg
 
-    b64 = message.get("test_bytes_b64")
-    if b64:
-        try:
-            return _b64.b64decode(b64)
-        except Exception:
-            pass
+    # A4: backdoor só com flag explícita (fora dos testes, Telegram nunca envia esse campo)
+    if _os.environ.get("ALLOW_TEST_BYTES") == "true":
+        b64 = message.get("test_bytes_b64")
+        if b64:
+            try:
+                return _b64.b64decode(b64)
+            except Exception:
+                pass
     photos = message.get("photo") or []
     if not photos:
         raise _tg.TelegramError("mensagem sem photo")

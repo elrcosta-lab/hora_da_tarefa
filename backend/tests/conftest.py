@@ -8,6 +8,10 @@ import os
 _TEST_DB = "/tmp/opencode/hora-tarefa-test.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB}"
 os.environ.setdefault("JWT_SECRET", "test-secret-32-chars-min-0123456789")
+# NUNCA a chave real: Settings lê .env do repo; testes usam dummy (falha rápida 401)
+os.environ["OPENROUTER_API_KEY"] = "sk-or-v1-test-dummy-key"
+# A4: backdoor de bytes só nos testes
+os.environ["ALLOW_TEST_BYTES"] = "true"
 # storage local isolado por padrão (test_storage.py sobrescreve por teste)
 os.environ.setdefault("STORAGE_BACKEND", "local")
 os.environ.setdefault("STORAGE_LOCAL_DIR", "/tmp/opencode/hora-images-test")
