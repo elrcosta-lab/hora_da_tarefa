@@ -192,7 +192,7 @@ export default function OnboardingPage() {
               <button className="btn-secondary" disabled={busy} onClick={genCode}>Gerar meu código</button>
             ) : (
               <div style={{ padding: 16, background: "#f1f5f9", borderRadius: 8, textAlign: "center", marginBottom: 12 }}>
-                <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: 8 }}>{code}</div>
+                <div className="code-display">{code}</div>
               </div>
             )}
             {linked && (

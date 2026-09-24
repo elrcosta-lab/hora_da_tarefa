@@ -363,7 +363,7 @@ function TarefasInner() {
         </div>
 
         {detail && (
-          <div className="card" style={{ marginTop: 16 }} role="dialog" aria-modal="true" aria-label="Detalhe da tarefa">
+          <div className="card sheet-mobile" style={{ marginTop: 16 }} role="dialog" aria-modal="true" aria-label="Detalhe da tarefa">
             <div className="topbar">
               <h2 style={{ margin: 0 }}>{detail.title || "Tarefa"}</h2>
               <div className="spacer" />
@@ -381,7 +381,7 @@ function TarefasInner() {
                     aria-label="Ampliar foto da tarefa"
                   >
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={imgUrl} alt={`Foto da tarefa ${detail.title || ""}`} style={{ width: "100%", height: 320, objectFit: "contain", borderRadius: 8, display: "block" }} />
+                    <img src={imgUrl} alt={`Foto da tarefa ${detail.title || ""}`} className="detail-img" style={{ background: "#f1f5f9" }} />
                   </button>
                 ) : (
                   <div className="empty">Sem foto disponível para esta tarefa.</div>
@@ -420,7 +420,7 @@ function TarefasInner() {
               </>
             )}
 
-            <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+            <div className="sticky-actions" style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
               {canConclude && <button className="btn-success" disabled={busy} onClick={() => setStatus("concluida")}>Concluir</button>}
               {canCancel && <button className="btn-secondary" disabled={busy} onClick={() => setStatus("cancelada")}>Cancelar</button>}
               {canArchive && <button className="btn-secondary" disabled={busy} onClick={() => setStatus("arquivada")}>Arquivar</button>}

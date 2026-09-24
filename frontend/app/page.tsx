@@ -235,13 +235,20 @@ export default function DashboardPage() {
             ))}
           </select>
           <div className="spacer" />
-          <form onSubmit={doUpload} style={{ display: "flex", gap: 8 }}>
+          <form onSubmit={doUpload} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <label htmlFor="upload-foto" className="btn-primary upload-label">
+              📷 {file ? "Trocar foto" : "Enviar tarefa"}
+            </label>
             <input
-              type="file" accept="image/jpeg,image/png,image/webp"
+              id="upload-foto" className="file-hidden"
+              type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment"
               aria-label="Foto da tarefa"
               onChange={(e) => setFile(e.target.files?.[0] || null)}
             />
-            <button className="btn-primary" disabled={busy || !file}>+ Enviar tarefa</button>
+            {file && <span className="muted upload-filename">{file.name}</span>}
+            <button className="btn-primary" disabled={busy || !file} style={{ minHeight: 48 }}>
+              {busy ? "Enviando…" : "+ Enviar"}
+            </button>
           </form>
         </div>
         {msg && <p className="muted" role="status">{msg}</p>}
@@ -272,8 +279,8 @@ export default function DashboardPage() {
                     <input id="r-title" type="text" value={rTitle} onChange={(e) => setRTitle(e.target.value)} style={{ width: "100%" }} />
                   </div>
                   <div style={{ flex: "1 1 140px" }}>
-                    <label htmlFor="r-due">Entrega (AAAA-MM-DD)</label>
-                    <input id="r-due" type="text" value={rDue} onChange={(e) => setRDue(e.target.value)} style={{ width: "100%" }} />
+                    <label htmlFor="r-due">Entrega</label>
+                    <input id="r-due" type="date" value={rDue} onChange={(e) => setRDue(e.target.value)} style={{ width: "100%" }} />
                   </div>
                   <div style={{ flex: "0 1 90px" }}>
                     <label htmlFor="r-min">Min</label>

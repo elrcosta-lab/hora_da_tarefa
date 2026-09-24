@@ -169,7 +169,7 @@ export default function ConfigPage() {
             )}
             {code && !linked && (
               <div style={{ marginTop: 12, padding: 16, background: "#f1f5f9", borderRadius: 8, textAlign: "center" }}>
-                <div style={{ fontSize: 32, fontWeight: 800, letterSpacing: 8 }}>{code}</div>
+                <div className="code-display">{code}</div>
                 <p className="muted">Envie esse código no chat do bot (ou /start {code}).</p>
               </div>
             )}
