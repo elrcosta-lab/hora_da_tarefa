@@ -558,8 +558,9 @@ Cria atividade extra.
 Importa grade + atividades + disponibilidade do responsável a partir de texto
 e/ou foto (bilhete, grade impressa, mensagem), via `nex-agi/nex-n2.5-mini`.
 
-**Request** `multipart/form-data`: `text` (opcional), `file` (opcional, jpeg/png/webp ≤10MB),
-`replace` (default `false`; `true` substitui grade e disponibilidade).
+**Request** `multipart/form-data`: `text` (opcional, máx. 20000 chars — 400 `TEXT_TOO_LARGE` acima),
+`file` (opcional, jpeg/png/webp ≤10MB), `replace` (default `false`; `true` substitui grade e disponibilidade).
+LLM roda em threadpool (não bloqueia o loop do worker único).
 
 **Response 201**
 ```json

@@ -96,6 +96,20 @@ def test_import_requires_text_or_file():
     assert r.status_code == 400
 
 
+def test_import_rejects_oversized_text_without_calling_llm():
+    """A1: texto sem teto vira amplificação p/ o OpenRouter (corpo até 11MB).
+    Teto de 20000 chars (400) + LLM fora do event loop."""
+    c = _client()
+    h, cid = _auth(c)
+    with patch("app.services.vision_openrouter.extract_routine",
+               return_value=_fake_routine()) as m:
+        r = c.post(f"/v1/children/{cid}/routine/import",
+                   data={"text": "Aula seg 07:30. " * 20000}, headers=h)
+    assert r.status_code == 400
+    assert r.json()["error"]["code"] == "TEXT_TOO_LARGE"
+    m.assert_not_called()
+
+
 def test_invalid_entries_rejected_without_persisting():
     import json
 

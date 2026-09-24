@@ -6,8 +6,12 @@ from pydantic import BaseModel
 from app.core.ratelimit import limit
 from app.core.security import get_current_user_id
 from app.tasks import routine as R
+from starlette.concurrency import run_in_threadpool
 
 router = APIRouter(prefix="/v1/children", tags=["children"])
+
+# A1: texto sem teto vira amplificação p/ o OpenRouter (corpo até 11MB).
+ROUTINE_TEXT_MAX = 20000
 
 
 def _err(code: str, message: str, http: int, details: dict | None = None) -> JSONResponse:
@@ -141,8 +145,13 @@ async def import_routine_view(
             return _err("UNSUPPORTED_MEDIA_TYPE", "Envie JPEG, PNG ou WEBP.", 415)
     if not (text or "").strip() and image_bytes is None:
         return _err("VALIDATION_ERROR", "Informe texto ou imagem da rotina.", 400)
+    text = (text or "").strip() or None
+    if text is not None and len(text) > ROUTINE_TEXT_MAX:
+        return _err("TEXT_TOO_LARGE",
+                    "Texto muito longo (máx. 20000 caracteres). Resuma dias e horários.", 400)
     try:
-        result = extract_routine(text=(text or None), image_bytes=image_bytes)
+        # SDK sync fora do event loop (worker único; chamada leva até 2×60s)
+        result = await run_in_threadpool(extract_routine, text=text, image_bytes=image_bytes)
     except ExtractionFailed as exc:
         msg = str(exc)
         if msg.startswith("EMPTY_INPUT"):
