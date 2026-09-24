@@ -147,11 +147,11 @@ export default function ConfigPage() {
             <div style={{ display: "flex", gap: 8 }}>
               <div style={{ flex: 1 }}>
                 <label htmlFor="q-start">Início</label>
-                <input id="q-start" type="text" value={qStart} onChange={(e) => setQStart(e.target.value)} style={{ width: "100%" }} />
+                <input id="q-start" type="time" value={qStart} onChange={(e) => setQStart(e.target.value)} style={{ width: "100%" }} />
               </div>
               <div style={{ flex: 1 }}>
                 <label htmlFor="q-end">Fim</label>
-                <input id="q-end" type="text" value={qEnd} onChange={(e) => setQEnd(e.target.value)} style={{ width: "100%" }} />
+                <input id="q-end" type="time" value={qEnd} onChange={(e) => setQEnd(e.target.value)} style={{ width: "100%" }} />
               </div>
             </div>
             <button className="btn-primary" disabled={busy || !childId} style={{ marginTop: 12 }}>Salvar</button>

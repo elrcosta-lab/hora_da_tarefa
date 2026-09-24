@@ -154,19 +154,19 @@ export default function OnboardingPage() {
             <h1 style={{ fontSize: 22, margin: "0 0 4px" }}>Passo 2 — Grade escolar</h1>
             <p className="muted">Quando há aula? O motor nunca agenda por cima. Pode pular e completar depois.</p>
             {rows.map((r, i) => (
-              <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+              <div key={i} style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
                 <select aria-label="Dia" value={r.weekday} onChange={(e) => {
                   const c = [...rows]; c[i] = { ...r, weekday: Number(e.target.value) }; setRows(c);
-                }}>
+                }} style={{ flex: "1 1 110px", minWidth: 0 }}>
                   {DAYS.map((d, di) => <option key={d} value={di}>{d}</option>)}
                 </select>
-                <input type="text" aria-label="Início" value={r.start} onChange={(e) => {
+                <input type="time" aria-label="Início" value={r.start} onChange={(e) => {
                   const c = [...rows]; c[i] = { ...r, start: e.target.value }; setRows(c);
-                }} style={{ width: 80 }} />
-                <input type="text" aria-label="Fim" value={r.end} onChange={(e) => {
+                }} style={{ width: 110 }} />
+                <input type="time" aria-label="Fim" value={r.end} onChange={(e) => {
                   const c = [...rows]; c[i] = { ...r, end: e.target.value }; setRows(c);
-                }} style={{ width: 80 }} />
-                <button type="button" className="btn-secondary" onClick={() => setRows(rows.filter((_, j) => j !== i))}>×</button>
+                }} style={{ width: 110 }} />
+                <button type="button" className="btn-secondary" aria-label="Remover bloco" onClick={() => setRows(rows.filter((_, j) => j !== i))}>×</button>
               </div>
             ))}
             <button type="button" className="btn-secondary" onClick={() => setRows([...rows, { weekday: 0, start: "07:30", end: "12:00", subject: "Aula" }])}>

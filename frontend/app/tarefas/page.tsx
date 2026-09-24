@@ -396,7 +396,7 @@ function TarefasInner() {
                 <input type="text" aria-label="Matéria" value={eSubject} onChange={(e) => setESubject(e.target.value)} style={{ width: 140 }} />
                 <input type="text" aria-label="Título" value={eTitle} onChange={(e) => setETitle(e.target.value)} style={{ flex: "2 1 180px" }} />
                 <input type="date" aria-label="Entrega" value={eDue} onChange={(e) => setEDue(e.target.value)} style={{ width: 150 }} />
-                <input type="text" aria-label="Minutos" value={eMinutes} onChange={(e) => setEMinutes(e.target.value)} style={{ width: 70 }} />
+                <input type="text" aria-label="Minutos" inputMode="numeric" value={eMinutes} onChange={(e) => setEMinutes(e.target.value)} style={{ width: 70 }} />
                 <input type="text" aria-label="Enunciado" value={eStatement} onChange={(e) => setEStatement(e.target.value)} style={{ flex: "1 1 100%" }} />
                 <button className="btn-primary" disabled={busy} onClick={saveEdit}>Salvar revisão</button>
                 <button className="btn-secondary" onClick={() => setEditing(false)}>Cancelar</button>

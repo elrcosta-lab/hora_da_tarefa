@@ -150,6 +150,9 @@ h2 { font-size: 18px; margin: 0 0 12px; }
 .upload-filename { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .code-display { font-size: clamp(24px, 8vw, 32px); font-weight: 800; letter-spacing: 4px; overflow-wrap: anywhere; }
 .detail-img { width: 100%; max-height: 40vh; object-fit: contain; border-radius: 8px; display: block; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 8; overflow-x: auto; }
+.cal-day { min-width: 140px; }
+.cal-nav-btn { min-width: 44px; min-height: 44px; }
 .sticky-actions { position: sticky; bottom: 0; padding: 12px 0 calc(12px + env(safe-area-inset-bottom)); background: linear-gradient(to top, var(--surface) 70%, transparent); }
 @media (max-width: 768px) {
   .topbar h1 { font-size: 20px; }
@@ -161,4 +164,6 @@ h2 { font-size: 18px; margin: 0 0 12px; }
   .task .btn-primary { width: 100%; }
   .sheet-mobile { border-radius: 16px 16px 0 0; margin: 0 -16px -24px; }
   .main { padding-bottom: calc(24px + env(safe-area-inset-bottom)); }
+  .cal-grid { grid-template-columns: 1fr; overflow-x: visible; }
+  .cal-day { min-width: 0; }
 }

@@ -101,14 +101,14 @@ export default function CalendarioPage() {
             {children.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
           </select>
           <div className="spacer" />
-          <button className="btn-secondary" onClick={() => setWeekOffset((o) => o - 1)}>‹</button>
-          <button className="btn-secondary" onClick={() => setWeekOffset(0)}>Hoje</button>
-          <button className="btn-secondary" onClick={() => setWeekOffset((o) => o + 1)}>›</button>
+          <button className="btn-secondary cal-nav-btn" aria-label="Semana anterior" onClick={() => setWeekOffset((o) => o - 1)}>‹</button>
+          <button className="btn-secondary" style={{ minHeight: 44 }} onClick={() => setWeekOffset(0)}>Hoje</button>
+          <button className="btn-secondary cal-nav-btn" aria-label="Próxima semana" onClick={() => setWeekOffset((o) => o + 1)}>›</button>
           <strong>{weekLabel}</strong>
         </div>
         {msg && <p className="muted" role="status">{msg}</p>}
 
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 8, overflowX: "auto" }}>
+        <div className="cal-grid">
           {days.map((day, wi) => {
             const daySched = schedules.filter((s) => s.weekday === wi).sort((a, b) => a.start_time.localeCompare(b.start_time));
             const dayActs = activities.filter((a) => a.weekday === wi);
@@ -117,7 +117,7 @@ export default function CalendarioPage() {
             );
             const isToday = sameDay(new Date(), day.toISOString());
             return (
-              <div className="card" key={wi} style={{ minWidth: 140, borderTop: isToday ? "3px solid var(--primary)" : undefined }}>
+              <div className="card cal-day" key={wi} style={{ borderTop: isToday ? "3px solid var(--primary)" : undefined }}>
                 <div style={{ fontWeight: 800 }}>{DAYS[wi]}</div>
                 <div className="muted">{day.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })}</div>
                 <div style={{ marginTop: 8, display: "flex", flexDirection: "column", gap: 6 }}>

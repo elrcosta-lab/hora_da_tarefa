@@ -209,9 +209,9 @@ export default function CriancasPage() {
             {children.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
           </select>
           <div className="spacer" />
-          <form onSubmit={addChild} style={{ display: "flex", gap: 8 }}>
-            <input type="text" placeholder="Nome" aria-label="Nome da criança" value={newName} onChange={(e) => setNewName(e.target.value)} required style={{ width: 140 }} />
-            <input type="text" placeholder="Série (ex. 5º ano)" aria-label="Série" value={newGrade} onChange={(e) => setNewGrade(e.target.value)} style={{ width: 140 }} />
+          <form onSubmit={addChild} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input type="text" placeholder="Nome" aria-label="Nome da criança" value={newName} onChange={(e) => setNewName(e.target.value)} required style={{ flex: "1 1 120px", minWidth: 0 }} />
+            <input type="text" placeholder="Série (ex. 5º ano)" aria-label="Série" value={newGrade} onChange={(e) => setNewGrade(e.target.value)} style={{ flex: "1 1 120px", minWidth: 0 }} />
             <button className="btn-primary" disabled={busy}>+ Adicionar</button>
           </form>
         </div>
@@ -268,8 +268,8 @@ export default function CriancasPage() {
                   <select aria-label="Dia" value={gDay} onChange={(e) => setGDay(Number(e.target.value))}>
                     {DAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
                   </select>
-                  <input type="text" aria-label="Início" value={gStart} onChange={(e) => setGStart(e.target.value)} style={{ width: 80 }} />
-                  <input type="text" aria-label="Fim" value={gEnd} onChange={(e) => setGEnd(e.target.value)} style={{ width: 80 }} />
+                  <input type="time" aria-label="Início" value={gStart} onChange={(e) => setGStart(e.target.value)} style={{ width: 110 }} />
+                  <input type="time" aria-label="Fim" value={gEnd} onChange={(e) => setGEnd(e.target.value)} style={{ width: 110 }} />
                   <input type="text" aria-label="Matéria" value={gSubject} onChange={(e) => setGSubject(e.target.value)} style={{ width: 150 }} />
                   <button className="btn-secondary" onClick={addScheduleRow}>+ Aula</button>
                   <button className="btn-primary" disabled={busy || schedules.length === 0} onClick={saveSchedules}>Salvar grade</button>
@@ -311,11 +311,11 @@ export default function CriancasPage() {
                     <div style={{ display: "flex", gap: 8 }}>
                       <div style={{ flex: 1 }}>
                         <label htmlFor="a-start">Início</label>
-                        <input id="a-start" type="text" value={aStart} onChange={(e) => setAStart(e.target.value)} style={{ width: "100%" }} />
+                        <input id="a-start" type="time" value={aStart} onChange={(e) => setAStart(e.target.value)} style={{ width: "100%" }} />
                       </div>
                       <div style={{ flex: 1 }}>
                         <label htmlFor="a-end">Fim</label>
-                        <input id="a-end" type="text" value={aEnd} onChange={(e) => setAEnd(e.target.value)} style={{ width: "100%" }} />
+                        <input id="a-end" type="time" value={aEnd} onChange={(e) => setAEnd(e.target.value)} style={{ width: "100%" }} />
                       </div>
                     </div>
                     <label htmlFor="a-travel">Deslocamento antes (min)</label>
