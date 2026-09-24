@@ -1,130 +1,131 @@
-# Auditoria de Segurança — Hora da Tarefa (pré-deploy VPS, 2ª rodada)
+# Auditoria de Segurança — Hora da Tarefa (VPS, 3ª rodada)
 
-- Data: 2026-09-23
-- Stack detectada: Next.js 14 (App Router) + FastAPI + SQLAlchemy + Postgres 16 + Redis + MinIO + JWT HS256 + Argon2id
-- Escopo: `backend/` (api, core, tasks, bot, models, alembic até `0011`), `frontend/` (app, lib, components), `docker-compose.yml`, `Caddyfile`, Dockerfiles, `.env.example`, histórico git. Sem Supabase/Firebase (RLS não se aplica). Somente leitura; nada foi modificado. Foco no delta desde a 1ª auditoria (admin RBAC, import por inferência, reprocess, usage, supervisão) + regressão dos fixes anteriores + prontidão VPS.
+- Data: 2026-09-24
+- Stack detectada: Next.js 14 (App Router) + FastAPI + SQLAlchemy 2 + Postgres 16 + Redis 7 + MinIO (S3) + JWT HS256 + Argon2id + bot Telegram próprio sobre httpx (polling) + OpenRouter (`nex-agi/nex-n2.5-mini:free`)
+- Escopo: código em produção na VPS (`/opt/hora_da_tarefa`, sincronia com o repo verificada por hash em 9 arquivos — idênticos), `backend/` (api, core, tasks, bot, models, services, alembic até `0012`), `frontend/` (app, lib), `docker-compose.yml` + override da VPS, `Caddyfile`, Dockerfiles, `.env.example`, `.gitignore`, histórico git. Sem Supabase/Firebase (V1 adaptada para isolamento por dono no servidor). Somente leitura; nada foi modificado. Foco no delta desde a 2ª rodada (RF-16 aprovação de contas `0012`, aviso `extracao_falhou`, troca p/ modelo `:free`, inferência de entrega, diversidade de slots, bot com id curto, frontend mobile) + regressão dos fixes A1–A7 + estado real da VPS (env, portas, host multi-tenant).
 
-## Status pós-correção (2026-09-23, verificado no código)
+## Status pós-correção (2026-09-24, verificado em produção)
 
-Todos os achados A1–A7 foram corrigidos (um commit por fix), e as observações O2/O6 confirmadas na operação do beta:
-
-| Achado | Status | Evidência da correção |
+| Item | Status | Evidência |
 |---|---|---|
-| A1 senha default do admin | ✅ corrigido | `backend/app/tasks/admin.py:27` — fail-closed (`RuntimeError` sem `ADMIN_PASSWORD`) |
-| A2 reprocess sem rate limit | ✅ corrigido | `backend/app/api/homeworks.py:181` — `limit(20/h)` + `limit(5/min)` por usuário |
-| A3 exclusão sem purga do storage | ✅ corrigido | `backend/app/tasks/admin.py:82-106` — coleta `storage_key`s e deleta via provider |
-| A4 backdoor `test_bytes_b64` | ✅ corrigido | `backend/app/bot/handlers.py:64` — só com `ALLOW_TEST_BYTES=true` |
-| A5 caption/hint sem teto | ✅ corrigido | Teto de 500 chars na camada `tasks` (`get_or_create_homework`) |
-| A6 docs interativas abertas | ✅ corrigido | `backend/app/main.py:58` — `docs_url=None` quando `ENV=prod` |
-| A7 containers como root | ✅ corrigido | `USER app` em `backend/Dockerfile:14` e `frontend/Dockerfile:22` |
+| O1 beat x polling | ✅ corrigido | `_select_sender` (`backend/app/tasks/beat.py:22`); compose respeita `.env`; modo efetivo polling+outbox verificado na VPS |
+| A1 import sem teto / LLM no loop | ✅ corrigido | `ROUTINE_TEXT_MAX` + `run_in_threadpool` (`backend/app/api/children.py`); spec §3.7b |
+| A2 callback `concluir:` sem escopo | ✅ corrigido | bloco único escopado a `owner_cb` (`backend/app/bot/handlers.py:227`) |
+| A3 `S3_ACCESS_KEY` default | ✅ corrigido | valor rotacionado na VPS (gerado server-side); round-trip MinIO OK |
+| A4 paginação em memória | ✅ corrigido | `count_homeworks` + `limit/offset` (`backend/app/tasks/extract.py`, rota) |
+| Compose `LIVE_SEND`/`MODEL` fixos | ✅ corrigido | `${VAR:-default}` (commit `b7f3058`) |
 
-**Risco residual aceito no beta:** O1 (sem TLS até o DNS), O3 (trânsito internacional OpenRouter/Telegram — citar no termo LGPD), O4 (rotacionar segredos locais `smoke-*` + `chmod 600`). O2 resolvida operacionalmente: bot em polling (`RUN_MODE=polling`).
+## Regressão da 2ª rodada (verificada nesta auditoria)
+
+| Achado | Status |
+|---|---|
+| A1 senha default do admin | ✅ mantém fail-closed (`backend/app/tasks/admin.py:27`); senha viva na VPS confirmada diferente do default histórico (prefixo difere de `Ui4u`) |
+| A2 reprocess sem rate limit | ✅ mantém `limit(20/h)` + `limit(5/min)` (`backend/app/api/homeworks.py:181`) |
+| A3 exclusão sem purga do storage | ✅ mantém coleta de `storage_key`s + delete via provider (`backend/app/tasks/admin.py:115-146`) |
+| A4 backdoor `test_bytes_b64` | ✅ mantém gate `ALLOW_TEST_BYTES` (`backend/app/bot/handlers.py:64`) |
+| A5 caption/hint sem teto | ✅ mantém `[:500]` (`backend/app/tasks/extract.py:67`) |
+| A6 docs interativas abertas | ✅ mantém `docs_url=None` com `ENV=prod` (`backend/app/main.py:58`); VPS com `ENV=prod` |
+| A7 containers como root | ✅ mantém `USER app` nos dois Dockerfiles |
 
 ## Resumo executivo
 
 | Severidade | Quantidade |
 |---|---|
 | Crítica | 0 |
-| Alta | 1 |
-| Média | 2 |
-| Baixa | 4 |
+| Alta | 0 |
+| Média | 1 |
+| Baixa | 3 |
 
-**Prioridade de correção:** A1, A2, A3, depois A4–A7.
+**Prioridade de correção:** A1, depois A2–A4. Atenção: O1 (observações) é defeito funcional ativo — lembretes do beat estão sendo descartados em silêncio na VPS; tratar antes ou junto do A1.
 
 ## Achados
 
-### [A1] Senha default do admin no código — backend/app/tasks/admin.py:28
-- **Severidade:** Alta
-- **Evidência:**
-  ```python
-  return (os.environ.get("ADMIN_EMAIL", DEFAULT_ADMIN_EMAIL),
-          os.environ.get("ADMIN_PASSWORD", "Ui4u%80D"))
-  ```
-- **Risco:** quem lê o repo (ou o histórico git, para sempre) sabe e-mail + senha do admin — se a VPS subir sem `ADMIN_PASSWORD` no ambiente, é takeover administrativo sem credencial.
-- **Correção:** fail-closed como o `JWT_SECRET` — remover o default e exigir a variável, ou exigir troca no 1º login:
-  ```python
-  password = os.environ.get("ADMIN_PASSWORD")
-  if not password:
-      raise RuntimeError("ADMIN_PASSWORD ausente — recuse o boot")
-  ```
-
-### [A2] Reprocess sem rate limit — cada chamada queima IA paga — backend/app/api/homeworks.py:181
+### [A1] Import de rotina sem teto de texto + LLM síncrono no loop — backend/app/api/children.py:117 + backend/app/services/vision_openrouter.py:259
 - **Severidade:** Média
 - **Evidência:**
   ```python
-  @router.post("/{homework_id}/reprocess", status_code=202)
-  def reprocess_homework_view(homework_id: str, background: BackgroundTasks,
-                              owner: str = Depends(get_current_user_id)):
+  # backend/app/api/children.py:117-145 (async def, sem background task)
+  file: UploadFile | None = File(default=None),
+  text: str | None = Form(default=None),
+  ...
+  result = extract_routine(text=(text or None), image_bytes=image_bytes)  # chamada sync, sem teto
   ```
-  Dono checado (`_owned_or_error`), mas sem `Depends(limit(...))` — só o global de 300/min. Cada chamada = 1–2 inferências pagas (`run_extraction` + retry de conteúdo vazio).
-- **Risco:** conta autenticada (registro aberto) drena créditos OpenRouter em loop.
-- **Correção:** os mesmos limites do upload:
   ```python
-  @router.post("/{homework_id}/reprocess", status_code=202,
-               dependencies=[Depends(limit(20, 3600, key="user", prefix="rp-hour")),
-                             Depends(limit(5, 60, key="user", prefix="rp-min"))])
+  # backend/app/services/vision_openrouter.py:246-247
+  parts: list = [{"type": "text",
+                  "text": _ROUTINE_SYSTEM + "\n\n" + anchor + "\n\nRotina:\n" + (text or "").strip()}]
   ```
-
-### [A3] Exclusão de conta não purga o storage — backend/app/tasks/admin.py
-- **Severidade:** Média
-- **Evidência:** `delete_user` remove linhas (`HomeworkImage`, `Homework`, `Child`…) mas grep por `storage|minio|s3` no arquivo retorna vazio — os bytes permanecem no MinIO/disco.
-- **Risco:** exclusão LGPD incompleta (dado da criança segue armazenado) + lixo pago acumulando.
-- **Correção:** coletar `storage_key`s antes do `delete` e removê-las via provider, com `purge_expired_images` como padrão:
+- **Risco:** conta aprovada envia `text` de até ~11 MB (só o Caddy limita o corpo) direto ao OpenRouter — queima cota/tokens — e a chamada SDK síncrona (até 2×60 s) trava o event loop do worker único, degradando a API inteira para todos; o limite 5/min não impede 5 janelas de 120 s.
+- **Correção:**
   ```python
-  keys = [i.storage_key for i in s.query(HomeworkImage).filter(
-      HomeworkImage.homework_id.in_(hw_ids)).all()]
-  # ...deletes...
-  from app.core.storage import get_storage
-  for k in keys:
-      try: get_storage().delete(k)
-      except Exception: pass
+  # backend/app/api/children.py — teto + fora do loop
+  from starlette.concurrency import run_in_threadpool
+  text = ((text or "").strip())[:20000]
+  ...
+  result = await run_in_threadpool(extract_routine, text=(text or None), image_bytes=image_bytes)
   ```
 
-### [A4] Backdoor de teste sem gate — backend/app/bot/handlers.py:62
+### [A2] Callback `concluir:` duplicado com lookup sem escopo de dono — backend/app/bot/handlers.py:227-237
 - **Severidade:** Baixa
-- **Evidência:** `b64 = message.get("test_bytes_b64")` — qualquer update com o `secret_token` pode injetar bytes arbitrários, pulando o download e alimentando a extração paga.
-- **Risco:** baixo (exige o secret do webhook), mas é bypass de validação + custo.
-- **Correção:** só honrar com flag explícita:
+- **Evidência:**
   ```python
-  import os
-  b64 = message.get("test_bytes_b64") if os.environ.get("ALLOW_TEST_BYTES") == "true" else None
+  if data.startswith("concluir:"):
+      hid = data.split(":", 1)[1]
+      target = _find_homework(hid, owner_cb)        # 1º bloco: resultado descartado
+  if data.startswith("concluir:"):                  # condição duplicada
+      hid = data.split(":", 1)[1]
+      target = _find_homework(hid) or ({"homework_id": hid} if len(hid) >= 32 else None)  # SEM dono + alvo fabricado
+      if target and _force_conclude(target["homework_id"]):  # _force_conclude não checa dono
+  ```
+  (`_find_homework` com `owner_user_id=None` varre **todas** as tarefas — `backend/app/tasks/extract.py:132` só filtra dono `if owner_user_id is not None`.)
+- **Risco:** hoje o bloco é inalcançável em produção (o bot nunca envia botões — `send_message` não tem `reply_markup` — e UUIDs não são adivinháveis), mas no dia em que botões forem ligados, um callback forjado conclui tarefa de outra família.
+- **Correção:**
+  ```python
+  if data.startswith("concluir:"):
+      hid = data.split(":", 1)[1]
+      target = _find_homework(hid, owner_cb)
+      if target and _force_conclude(target["homework_id"]):
   ```
 
-### [A5] Caption/hint sem teto — backend/app/bot/handlers.py:260
+### [A3] `S3_ACCESS_KEY` possivelmente ainda default — VPS `.env`
 - **Severidade:** Baixa
-- **Evidência:** `hint_text=message.get("caption")` vai cru para `extraction_json.meta` (repetido da 1ª auditoria, ainda aberto).
-- **Risco:** metadado gigante por tarefa no JSONB.
-- **Correção:** `hint_text=(message.get("caption") or "")[:500]` (e o mesmo no `Form hint_text` do upload).
+- **Evidência:** prefixo do valor na VPS é `min` (default do código em `backend/app/core/storage.py:102` é `minioadmin`); demais segredos confirmados rotacionados (prefixos diferem dos defaults/histórico). MinIO sem porta publicada (só rede interna).
+- **Risco:** credencial adivinhável para quem alcançar a rede de containers; combinada a qualquer SSRF/RCE futuro, vira leitura das fotos das tarefas.
+- **Correção:**
+  ```bash
+  grep S3_ACCESS_KEY .env | grep -qv minioadmin && echo OK || echo ROTACIONAR
+  # rotação: gerar valor forte, atualizar .env, docker compose up -d minio api
+  ```
 
-### [A6] Docs interativas abertas — backend/app/main.py
+### [A4] Listagem pagina em memória, sem LIMIT/OFFSET no SQL — backend/app/api/homeworks.py:99-104
 - **Severidade:** Baixa
-- **Evidência:** `FastAPI(...)` sem `docs_url`/`redoc_url` (grep vazio; repetido da 1ª auditoria).
-- **Risco:** mapa completo da API para quem varre a VPS.
-- **Correção:** `docs_url=None, redoc_url=None` quando `ENV=prod`.
+- **Evidência:**
+  ```python
+  items = list_homeworks(child_id=child_id, owner_user_id=owner, ...)
+  total = len(items)          # carrega TODAS as linhas do dono...
+  page_items = items[start : start + page_size]  # ...para fatiar em Python (saída ≤100)
+  ```
+- **Risco:** conta com dezenas de milhares de tarefas transforma cada listagem em full scan + desserialização (carga de banco/CPU por request autenticado; saída continua tetada em 100).
+- **Correção:** paginar no SQL (`limit(page_size).offset(start)` + `count()` separado para `total`).
 
-### [A7] Containers como root — backend/Dockerfile, frontend/Dockerfile
-- **Severidade:** Baixa
-- **Evidência:** grep por `USER` vazio nos dois Dockerfiles (repetido da 1ª auditoria).
-- **Risco:** escape de container com privilégio total.
-- **Correção:** `RUN adduser --disabled-password app && USER app` (+ `chown` dos volumes da app).
+## Observações adicionais
 
-## Observações adicionais (deploy VPS)
-
-- **O1 — Sem TLS:** `Caddyfile` com `auto_https off` e só `:80` — na VPS apontar domínio e remover o `off`; até lá, JWT/senhas em claro até em rede interna.
-- **O2 — Webhook x polling:** sem URL pública o Telegram não entrega updates (bot mudo nos dois sentidos); usar `RUN_MODE=polling` (só egress) ou expor o webhook. O `secret_token` + `compare_digest` só valem no modo webhook.
-- **O3 — Egresso + LGPD:** OpenRouter e Telegram exigem saída 443 e recebem dado de menor — citar nominalmente no termo de consentimento.
-- **O4 — Segredos locais:** o `.env` desta máquina ainda usa valores `smoke-*` com permissão 664 — **rotacionar tudo** (`JWT_SECRET`, `POSTGRES_PASSWORD`, `S3_SECRET_KEY`, `TELEGRAM_WEBHOOK_SECRET`, `ADMIN_PASSWORD`) e `chmod 600` antes da VPS. Nada disso está no git (verificado).
-- **O5 — Redis/MinIO internos:** sem portas publicadas e sem senha — aceitável restrito à rede `internal`; nunca expor sem credencial + TLS.
-- **O6 — Override local:** `docker-compose.override.yml` (8081/3100) é gitignored e específico daqui — não copiar para a VPS.
-- **O7 — Refresh rotation, lockout de login e purge LGPD** verificados e operantes; `GET /usage` escopado por dono.
+- **O1 — Beat x polling (CORRIGIDO; leitura inicial ajustada):** a primeira versão deste relatório afirmava perda total em polling — a verificação de deploy revelou que o `docker-compose.yml` fixava `TELEGRAM_LIVE_SEND: "true"`, que prevalece sobre o `.env` (`false`); ou seja, o beat entregava direto via Bot API e não havia perda. A contradição (env morto + fallback ausente) era a armadilha real: corrigida com `_select_sender` (`backend/app/tasks/beat.py`) — live→direto, polling→outbox (descarregado pelo flush), senão nada — e compose passando a respeitar o `.env`. Modo efetivo na VPS agora: polling+outbox (verificado em produção).
+- **O2 — Sem TLS (persiste da 2ª rodada):** API (`:8081` via Caddy) e web (`:3100`) em HTTP puro, sem domínio; JWT/senhas trafegam em claro até a VPS. O nginx do host tem TLS, mas serve só os outros tenants (`amarelinho`, `forensis`, `uga-carbon`) — nada nosso passa por ele.
+- **O3 — LGPD/trânsito internacional:** extração agora no `:free` (Nex AGI) + Telegram seguem recebendo dado de menor — citar nominalmente no termo de consentimento.
+- **O4 — Override na VPS contradiz a doc:** `/opt/hora_da_tarefa/docker-compose.override.yml` existe na VPS (só remapeia `caddy→8081`, `web→3100`; inofensivo e na prática obrigatório, pois o nginx do host ocupa 80/443) — atualizar O6 da rodada anterior em vez de remover.
+- **O5 — Rewrite `/api/*` morto no `frontend/next.config.*`:** nenhuma tela usa `/api/` (tudo via `NEXT_PUBLIC_API_URL`); se um dia for usado, todo o rate limit por IP colapsa para o IP do container web. Remover ou documentar.
+- **O6 — `ensure_admin` promove conta existente sem conferir senha** (`backend/app/tasks/admin.py:52-54`): janela de race ~zero (seed roda no boot antes de servir), mas endurecer (só promover se `password_hash` nulo) elimina a classe.
+- **O7 — Redis/MinIO sem senha em rede interna** (persiste): aceitável enquanto sem porta publicada — nunca expor.
+- **O8 — Tokens em `localStorage`** (`frontend/lib/api.ts:20-23`): sem sink XSS no frontend hoje, impacto contido; `httpOnly` seria o ideal.
+- **O9 — Histórico git retém o default antigo do admin** (`Ui4u%80D`, commits `5d78df7`→`abf2ff5`): valor vivo na VPS confirmado diferente; sem ação além de nunca reutilizar.
 
 ## Pontos verificados sem achados
 
-- **Autorização:** 100% das rotas de recurso com Bearer + 403 cross-account, incluindo as novas (`usage`, `settings` GET, `activities` DELETE, `reprocess`, `PATCH` edit, `/image`, `routine/import`); bot restrito ao vínculo; admin com `require_admin` + handler 403.
-- **IDOR/admin:** `owns`/`owned_by` em todos os `:id`; autoexclusão e último-admin bloqueados; reset revoga refresh e exige ≥8.
-- **Upload/storage:** magic bytes, 10MB web e bot, chaves UUID, `_check_key` anti-traversal, teto Pillow, data passada rejeitada, dedupe SHA-256.
-- **Validação:** Pydantic + allowlists (`PATCH`, settings, link); `int()` sob `try` (400); sem SQL cru; sem sinks XSS.
-- **Segredos:** histórico git limpo, `.env` nunca rastreado, `NEXT_PUBLIC_*` só com URL e handle público.
-- **DoS:** rate limits em upload/login/register/webhook/global com 429 + `Retry-After`; corpo 11MB; export com teto; beat com disjuntor.
-- **Sessões:** Argon2id, JWT fail-closed, refresh single-use com detecção de reuso, login 401 genérico.
-- **RLS (V1):** não aplicável — sem BaaS com chave anônima.
+- **V1 (RLS):** não aplicável — sem BaaS com chave anônima; isolamento equivalente por dono verificado em 100% das rotas de recurso (`list_homeworks`/`export_csv`/`usage_summary`/`today_overview` filtram `owner_user_id`; `owns`/`owned_by` em todos os `:id` de children, homeworks, agenda, image, reprocess, status, edit, accept, suggestions, notifications, settings).
+- **V2:** sem decisão de permissão no frontend (sem tela admin, sem `isAdmin`/`role`); `require_admin` com 403 em todas as rotas `/v1/admin/*`; RF-16 com gates no servidor (login 403, link 403, vínculo e bot com `PENDING_MSG`).
+- **V3 (rotas HTTP):** todos os `:id` checam existência (404) + posse (403) antes de ler/gravar; `accept` só aceita slot das sugestões atuais; `delete_activity` confere `child_id`; autoexclusão e último-admin bloqueados.
+- **V4:** `.env` nunca rastreado no git; histórico sem chave real (só placeholders `...`/`CHANGE_ME`/dummy); `NEXT_PUBLIC_*` só com URL e handle público do bot; `.env` da VPS com permissão 600; `JWT_SECRET`/`POSTGRES_PASSWORD`/`ADMIN_PASSWORD`/`S3_SECRET_KEY` rotacionados (prefixos conferidos).
+- **V5 (demais):** magic bytes (não confia em content-type), 10 MB web+bot+import, rewrite via Pillow, teto anti-bomba 25 MP, chaves UUID + `_check_key` anti-traversal, hint 500 chars, Pydantic + allowlists (`PATCH`, settings, activities), `int()`/`weekday`/`HH:MM` sob `Validation` (400), sem SQL cru (ORM), sem sinks XSS, sem `innerHTML`.
+- **V6 (demais):** limits em upload/login(10/900 ip+email)/register/reprocess/import/webhook(120/min IP)/global 300/min com 429 + `Retry-After`; corpo 11 MB no Caddy; export tetado em 5000; beat com `coalesce`/`max_instances=1` e disjuntor de tentativas; polling com backoff até 30 s; Argon2id (login caro por design, coberto pelo lockout).
+- **Infra/host:** somente `3100`/`8081` públicos (nossos); postgres/redis/minio sem porta no host; `ENV=prod` (docs fechadas); containers não-root; host multi-tenant sem colisão envolvendo nossos serviços (`127.0.0.1:8000` é do tenant `amarelinho`, não nosso — verificado via `docker ps`).
