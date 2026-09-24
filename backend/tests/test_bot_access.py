@@ -153,3 +153,33 @@ def test_expired_code_rejected():
     code = c.post("/v1/auth/telegram/link", json={"user_id": first["user_id"]},
                   headers=h_owner).json()["link_code"]
     assert U.link_telegram(code, 778) is not None
+
+
+def test_callback_concluir_other_users_task_is_rejected():
+    """A2: callback `concluir:` forjado com UUID de outra família não pode
+    concluir (lookup sem escopo + fallback fabricado)."""
+    from app.bot.handlers import last_sent
+    from app.tasks import users as U
+    from app.tasks.extract import get_homework, get_or_create_homework
+
+    c = _client()
+    # vítima: conta aprovada + criança + tarefa ativa
+    hv, uid_v = make_auth(c, name="Vitima")
+    cid_v = c.post("/v1/children", json={"name": "Ana"}, headers=hv).json()["id"]
+    rec, _ = get_or_create_homework(b"bytes-vitima-a2", child_id=cid_v,
+                                    created_by_user_id=uid_v)
+    hid_v = rec["homework_id"]
+    # atacante: conta aprovada vinculada ao chat 502
+    ha, uid_a = make_auth(c, name="Atacante")
+    code_a = c.post("/v1/auth/telegram/link", json={"user_id": uid_a},
+                    headers=ha).json()["link_code"]
+    assert U.link_telegram(code_a, 502) is not None
+    # callback forjado com o UUID COMPLETO da vítima
+    upd = {"update_id": 140,
+           "callback_query": {"id": "cb-forjado", "from": {"id": 502},
+                              "message": {"message_id": 9, "chat": {"id": 502}},
+                              "data": f"concluir:{hid_v}"}}
+    r = c.post("/v1/telegram/webhook", headers=_headers(), json=upd)
+    assert r.status_code == 200
+    assert get_homework(hid_v)["status"] != "concluida"
+    assert "concluída" not in (last_sent(502) or "").lower()

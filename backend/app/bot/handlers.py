@@ -225,11 +225,9 @@ def handle_update(update: dict) -> dict:
             return {"ok": True, "restricted": True, "pending": True}
         data = cb.get("data", "")
         if data.startswith("concluir:"):
+            # A2: lookup SEMPRE escopado ao dono; sem fallback fabricado
             hid = data.split(":", 1)[1]
             target = _find_homework(hid, owner_cb)
-        if data.startswith("concluir:"):
-            hid = data.split(":", 1)[1]
-            target = _find_homework(hid) or ({"homework_id": hid} if len(hid) >= 32 else None)
             if target and _force_conclude(target["homework_id"]):
                 _send(chat_id, "Tudo certo! Tarefa concluída. 🎉")
             else:
