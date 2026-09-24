@@ -128,3 +128,55 @@ def test_tick_without_sender_only_marks():
     assert out["overdue"] == []
     assert out["sent"] == 0
     assert out["errors"] == 0
+
+
+def test_select_sender_polling_queues_outbox(monkeypatch):
+    """O1: em modo polling (VPS), o beat deve enfileirar no outbox — nunca None.
+    sender=None marca sent sem entregar (lembretes morriam em silêncio)."""
+    monkeypatch.setenv("TELEGRAM_LIVE_SEND", "false")
+    monkeypatch.setenv("TELEGRAM_POLLING", "true")
+    from app.bot.handlers import last_sent
+    from app.core.config import get_settings
+    from app.tasks import beat as B
+
+    sender = B._select_sender(get_settings())
+    assert sender is not None
+    sender(701, "lembrete de teste")
+    assert last_sent(701) == "lembrete de teste"
+
+
+def test_select_sender_neither_is_none(monkeypatch):
+    monkeypatch.setenv("TELEGRAM_LIVE_SEND", "false")
+    monkeypatch.setenv("TELEGRAM_POLLING", "false")
+    from app.core.config import get_settings
+    from app.tasks import beat as B
+
+    assert B._select_sender(get_settings()) is None
+
+
+def test_beat_tick_polling_sender_delivers_due():
+    """Integração: lembrete vencido chega ao outbox do chat vinculado."""
+    from app.bot.handlers import last_sent
+    from app.tasks import beat as B
+    from app.tasks import users as U
+
+    c = _client()
+    u = U.create_user("Pai")
+    U.link_telegram(u["link_code"], 703)
+    hid = _make_overdue_homework(c, u["user_id"])
+
+    import os
+
+    os.environ["TELEGRAM_LIVE_SEND"] = "false"
+    os.environ["TELEGRAM_POLLING"] = "true"
+    try:
+        from app.core.config import get_settings
+
+        out = B.run_beat_tick(now=datetime(2026, 9, 26, 12, 0, tzinfo=TZ),
+                              sender=B._select_sender(get_settings()))
+    finally:
+        os.environ.pop("TELEGRAM_LIVE_SEND", None)
+        os.environ.pop("TELEGRAM_POLLING", None)
+    assert out["sent"] >= 1
+    assert last_sent(703) is not None
+    _ = hid

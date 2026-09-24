@@ -126,7 +126,7 @@ flowchart LR
 |---|---|---|
 | `api` | Autenticação, CRUD, upload, extração em background, expõe `/suggestions`, webhook Telegram | Não chama IA inline no request (responde 202 e processa em background) |
 | `extract` (background) | Anonimiza imagem (resize/strip EXIF/hash), chama OpenRouter Nex-N2.5-Mini pago, valida JSON, grava `homework` + `homework_image` | Não roda modelo local; não envia notificação |
-| `scheduler` (beat) | `APScheduler` no lifespan da API: tick 1/min (`run_beat_tick` = `mark_overdue` + `dispatch_due` com sender Telegram quando `TELEGRAM_LIVE_SEND`) + purge de imagens 1x/dia; `BEAT_ENABLED=false` desliga | - |
+| `scheduler` (beat) | `APScheduler` no lifespan da API: tick 1/min (`run_beat_tick` = `mark_overdue` + `dispatch_due`; entrega direta via Bot API quando `TELEGRAM_LIVE_SEND`, via outbox do polling quando `TELEGRAM_POLLING`, senão só marca — `_select_sender` em `app/tasks/beat.py`) + purge de imagens 1x/dia; `BEAT_ENABLED=false` desliga | - |
 | `bot` (httpx, sem aiogram) | Recebe update via webhook ou polling (`RUN_MODE`, `app/bot/polling.py`), valida vínculo do usuário, opera via camada `tasks` | Não expõe dados sem vínculo (§6.1 gate) |
 | `minio` | Guarda imagens originais e derivadas | - |
 | `openrouter` (externo) | Inferência multimodal imagem→JSON (`nex-agi/nex-n2.5-mini:free`) | Não guarda estado; 429 com backoff; 404 No-endpoints não retenta no beat |

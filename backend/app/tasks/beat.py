@@ -19,6 +19,22 @@ def send_telegram(chat_id: int, text: str) -> int | None:
     return _tg.send_message(settings.TELEGRAM_BOT_TOKEN, int(chat_id), text)
 
 
+def _select_sender(settings):
+    """Escolhe como o beat entrega: direto via Bot API (live), via outbox
+    descarregado pelo polling, ou nada (marca sent, modo teste).
+
+    O1: com TELEGRAM_LIVE_SEND=false o beat passava sender=None e os
+    lembretes morriam em silêncio mesmo com polling ativo.
+    """
+    if settings.TELEGRAM_LIVE_SEND:
+        return send_telegram
+    if settings.TELEGRAM_POLLING:
+        from app.bot.handlers import _send as _queue
+
+        return lambda chat_id, text: _queue(int(chat_id), text)
+    return None
+
+
 def run_beat_tick(now: datetime | None = None, sender=None) -> dict:
     """Executa um ciclo: atrasos + envios + retry de extrações travadas."""
     from app.tasks import notify as _N
@@ -46,8 +62,7 @@ def start_scheduler() -> object:
     def _tick():
         from app.core.config import get_settings
 
-        live = get_settings().TELEGRAM_LIVE_SEND
-        run_beat_tick(sender=send_telegram if live else None)
+        run_beat_tick(sender=_select_sender(get_settings()))
 
     sched.add_job(_tick, "interval", minutes=1, id="beat-tick", max_instances=1, coalesce=True)
     sched.add_job(purge_expired_images, "interval", hours=24, id="purge-images")
