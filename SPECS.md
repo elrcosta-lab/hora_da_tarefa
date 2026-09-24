@@ -2,7 +2,7 @@
 
 > Documento de Especificação Técnica (Spec-Driven Development).
 > Autor: subagente SPEC + OpenCode · Versão: 1.3 (aprovação de contas) · Status: **Aprovada para o beta**
-> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini` pago) + bot em polling.
+> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini:free`; pago delistado em 2026-09-24) + bot em polling.
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
 
 ---
@@ -50,7 +50,7 @@
 | Storage | **MinIO (S3-compatible) em volume Docker** | diretório em volume + abstração S3 | Mesma API S3 permite migrar para provedor externo sem trocar código. |
 | Bot Telegram | **Handlers próprios em Python sobre `httpx` (sem aiogram)** | grammY/Telegraf (Node) | Mesmo processo da API; polling (`RUN_MODE`) ou webhook + idempotência por `update_id` |
 | OCR | **Nenhum no caminho crítico** (Nex-N2.5-Mini lê imagem direto) | Tesseract 5 como enriquecimento futuro opcional | Removido para simplificar; reavaliar pós-MVP se manuscrito exigir |
-| VLM (extração) | **OpenRouter `nex-agi/nex-n2.5-mini` pago via `openai` SDK (`base_url=https://openrouter.ai/api/v1`)** | `:free` da mesma família como contingência | MoE multimodal 35B/3B ativos, 262k contexto, structured output, microcusto (US$ 0,025/0,10 por 1M tokens); `:free` satura em pico |
+| VLM (extração) | **OpenRouter `nex-agi/nex-n2.5-mini:free` via `openai` SDK (`base_url=https://openrouter.ai/api/v1`)** | `nex-agi/nex-n2.5-pro:free` como escalonamento futuro | MoE multimodal 35B/3B ativos, 262k contexto, structured output, $0 no free (pago delistado: 404 No endpoints desde 2026-09-24); `:free` satura em pico — backoff + aviso `extracao_falhou` |
 | LLM fallback texto | **O mesmo Nex-N2.5-Mini (só-texto, sem imagem)** | — | Sem Llama/Qwen local; retry usa o mesmo modelo com `temperature=0.1` |
 | Runtime IA | **HTTP client + Pillow (resize/strip EXIF)** | — | Sem Ollama/llama.cpp; worker leve |
 | Reverse proxy/TLS | **Caddy** (TLS automático) | Nginx + certbot | Menos config na VPS. |
@@ -129,13 +129,13 @@ flowchart LR
 | `scheduler` (beat) | `APScheduler` no lifespan da API: tick 1/min (`run_beat_tick` = `mark_overdue` + `dispatch_due` com sender Telegram quando `TELEGRAM_LIVE_SEND`) + purge de imagens 1x/dia; `BEAT_ENABLED=false` desliga | - |
 | `bot` (httpx, sem aiogram) | Recebe update via webhook ou polling (`RUN_MODE`, `app/bot/polling.py`), valida vínculo do usuário, opera via camada `tasks` | Não expõe dados sem vínculo (§6.1 gate) |
 | `minio` | Guarda imagens originais e derivadas | - |
-| `openrouter` (externo) | Inferência multimodal imagem→JSON (`nex-agi/nex-n2.5-mini` pago) | Não guarda estado; 429 tratado com backoff |
+| `openrouter` (externo) | Inferência multimodal imagem→JSON (`nex-agi/nex-n2.5-mini:free`) | Não guarda estado; 429 com backoff; 404 No-endpoints não retenta no beat |
 
 ### 1.3 Fluxo principal (happy path)
 
 1. Pai envia foto no Telegram → bot baixa arquivo via `getFile` e registra `homework` (status `pendente`) com `child_id` (contexto ou única criança).
 2. API anonimiza (resize ≤1600px, strip EXIF, SHA-256), salva imagem em `homework_image`, responde 202 e roda a extração em background (dedupe por `sha256`: hash repetido reaproveita `extraction_json` sem chamar API).
-3. Extração chama OpenRouter `nex-agi/nex-n2.5-mini` pago (derivada 1024px + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança, `extraction_status`) → motor de agendamento grava `suggestion_slot`.
+3. Extração chama OpenRouter `nex-agi/nex-n2.5-mini:free` (derivada 1024px + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança, `extraction_status`) → motor de agendamento grava `suggestion_slot`. Falha → `falhou` + aviso `extracao_falhou` (revisão manual).
 4. Bot envia mensagem com sugestão e botões (`Agendar` / `Outra` / `Não é tarefa`).
 5. Beat agenda lembretes 24h/2h em `notification_log` (status `scheduled`) e dispara quando vence.
 
@@ -909,7 +909,8 @@ resp = client.chat.completions.create(
 | `0.6 ≤ confidence < 0.75` | `extraction_status='baixa_confianca'`; notifica pedindo confirmação |
 | `confidence < 0.6` ou campos críticos nulos | `revisao_humana`; bot envia formulário rápido / UI destaca |
 | `is_homework=false` e conf ≥0.8 | descarta com aviso "Não identifiquei uma tarefa" |
-| 429 rate limit (tier pago) ou 5xx/timeout 60s | backoff 1/5/30 min, máx. 3 retries; depois → `falhou` + entrada manual |
+| 429 rate limit ou 5xx/timeout 60s | backoff 1/5/30 min, máx. 3 retries; depois → `falhou` + aviso `extracao_falhou` + entrada manual |
+| 404 No-endpoints no mesmo modelo | erro de config, nunca retentar no beat (`failed_model`); `falhou` + aviso imediato |
 | Tarefa repetida (sha256 igual) | reaproveita extração anterior, **não chama API** |
 | `AI_ENABLED=false` | pula IA, cria tarefa para preenchimento manual |
 
@@ -927,9 +928,9 @@ resp = client.chat.completions.create(
 ### 5.6 Config IA (`.env` — ver `.env.example`)
 
 ```
-# OpenRouter (primário, substitui VLM local)
+# OpenRouter (primário; pago nex-agi/nex-n2.5-mini DELISTADO em 2026-09-24 — 404 No endpoints)
 OPENROUTER_API_KEY=sk-or-v1-...
-OPENROUTER_MODEL=nex-agi/nex-n2.5-mini
+OPENROUTER_MODEL=nex-agi/nex-n2.5-mini:free
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=https://horadatarefa.app
 OPENROUTER_APP_NAME=Hora da Tarefa
@@ -1046,6 +1047,7 @@ Começa {{scheduled_start | HH:mm}}. Vai dar tempo? 💪
 | `lembrete_24h` | `scheduled_for = scheduled_start - 24h` | `r24:{homework_id}:{user_id}` |
 | `lembrete_2h` | `scheduled_for = scheduled_start - 2h` | `r2:{homework_id}:{user_id}` |
 | `atraso` | beat detecta `due_at < now`, status não final | `late:{homework_id}:{user_id}` |
+| `extracao_falhou` | extração falhou: pede revisão manual da foto | `fail:{homework_id}:{child_id}` |
 | `resumo_diario` | opcional, 07:00 local | `daily:{user_id}:{date}` |
 
 - Respeitar `quiet_hours`: lembretes fora da janela são adiados para o início da janela.
@@ -1267,7 +1269,7 @@ Funcionalidade: Upload de foto da tarefa
 | E2E | Playwright (headless) | upload→sugestão→aceitar→notificação (Telegram mock + OpenRouter mock) | agendado |
 | Carga | Locust/K6 | 50 usuários, p95 < 800ms em `/homeworks` | janela de manutenção |
 
-**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data. Teste live usa `OPENROUTER_MODEL=nex-agi/nex-n2.5-mini` pago com cache para não queimar crédito.
+**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data. Teste live usa `OPENROUTER_MODEL=nex-agi/nex-n2.5-mini:free` com cache (429 do free é esperado; 404 = modelo morto, trocar).
 
 - **Regras de CI:** unit+contrato em todo PR (com mock); integração IA live manual/noturna. Sem worker de IA pesado (extração é HTTP + Pillow, sem modelo residente).
 

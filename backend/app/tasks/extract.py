@@ -311,8 +311,21 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
             hw.extraction_status = "falhou"
             meta = dict((hw.extraction_json or {}).get("meta", {}))
             meta["last_error"] = str(exc)
+            meta["failed_model"] = _current_model()
             hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
             s.flush()
+            try:
+                # mesma sessão (evita lock do sqlite com sessão aninhada);
+                # idempotente por key: repetir a falha não duplica o aviso
+                from datetime import datetime as _dt
+
+                from app.core.db import TZ as _TZ
+                from app.tasks.notify import _upsert
+
+                _upsert(s, "extracao_falhou", homework_id, hw.child_id, _dt.now(_TZ))
+                s.flush()
+            except Exception:
+                pass
             return _to_dict(hw)
         if not result.is_homework:
             hw.extraction_status = "descartada"
@@ -375,6 +388,26 @@ def _bump_attempts(hw) -> int:
     return meta["attempts"]
 
 
+def _current_model() -> str | None:
+    try:
+        from app.core.config import get_settings
+
+        return get_settings().OPENROUTER_MODEL
+    except Exception:
+        return None
+
+
+def _should_skip_retry(hw_dict: dict, current_model: str | None) -> bool:
+    """404 No-endpoints no MESMO modelo = erro de config (nunca se autocura):
+    o beat não queima tentativas nem chamadas nele. Modelo diferente (ou sem
+    registro) mantém a retentativa normal."""
+    meta = (hw_dict.get("extraction_json") or {}).get("meta", {})
+    if "No endpoints" not in str(meta.get("last_error") or ""):
+        return False
+    failed_model = meta.get("failed_model")
+    return failed_model is not None and failed_model == current_model
+
+
 MAX_AUTO_ATTEMPTS = 3  # disjuntor: além disso só manual (reprocess) — protege créditos
 
 
@@ -398,6 +431,8 @@ def retry_stale_extractions(now: datetime | None = None, older_than_minutes: int
             with session_scope() as s:
                 hw = s.get(Homework, hid)
                 if hw is None or _attempts(hw) >= MAX_AUTO_ATTEMPTS:
+                    continue
+                if _should_skip_retry(_to_dict(hw), _current_model()):
                     continue
                 _bump_attempts(hw)
             run_extraction(hid)

@@ -160,6 +160,9 @@ def schedule_for_homework(homework_id: str, now: datetime | None = None) -> list
 def _render(kind: str, hw: dict) -> str:
     subject = hw.get("subject") or "Tarefa"
     title = hw.get("title") or "sem título"
+    if kind == "extracao_falhou":
+        return ("⚠️ Não consegui ler a foto\n"
+                "Vou tentar de novo sozinho — ou abra a tarefa e preencha em Revisar dados.")
     if kind == "lembrete_24h":
         return f"⏰ Falta 1 dia\n{subject} — \"{title}\"\n[✅ Concluir]"
     if kind == "lembrete_2h":

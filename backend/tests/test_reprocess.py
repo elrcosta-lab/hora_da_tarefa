@@ -129,6 +129,90 @@ def _upload_stuck(client, h, cid):
                            data={"child_id": cid}, headers=h).json()["homework_id"]
 
 
+def _upload_failing(client, h, cid, error: str):
+    """Upload cuja extração falha (mock) — para testar o caminho falhou."""
+    from app.services.vision_openrouter import ExtractionFailed
+
+    img = Image.new("RGB", (800, 600), (6, 6, 6))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    with patch("app.services.vision_openrouter.extract_homework",
+               side_effect=ExtractionFailed(error)):
+        r = client.post("/v1/homeworks/upload",
+                        files={"file": (f"{uuid.uuid4()}.jpg", buf.getvalue(), "image/jpeg")},
+                        data={"child_id": cid}, headers=h)
+    assert r.status_code == 202, r.text
+    return r.json()["homework_id"]
+
+
+def test_failed_extraction_schedules_review_notice_once():
+    """Bug real (2026-09-24): modelo pago devolveu 404 No-endpoints; o usuário viu
+    'Recebi! Analisando...' e depois uma tarefa oca, sem nenhum aviso.
+    Falha de extração agenda o aviso extracao_falhou (idempotente) e o dispatch
+    o entrega uma única vez pedindo revisão manual.
+    """
+    from app.main import app
+    from fastapi.testclient import TestClient
+
+    from app.tasks import notify as N
+    from app.tasks.extract import get_homework
+
+    client = TestClient(app)
+    h, uid = make_auth(client)
+    cid = client.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    hid = _upload_failing(client, h, cid, "Error code: 404 - No endpoints found")
+    assert get_homework(hid)["extraction_status"] == "falhou"
+    kinds = [x["kind"] for x in N.list_notifications(homework_id=hid)]
+    assert "extracao_falhou" in kinds
+    # repetir a falha não duplica o aviso
+    from app.tasks.extract import run_extraction
+    from app.services.vision_openrouter import ExtractionFailed
+
+    with patch("app.services.vision_openrouter.extract_homework",
+               side_effect=ExtractionFailed("Error code: 404 - No endpoints found")):
+        run_extraction(hid)
+    assert sum(1 for x in N.list_notifications(homework_id=hid)
+               if x["kind"] == "extracao_falhou") == 1
+    # dispatch entrega pedindo revisão manual (dono com telegram vinculado)
+    from app.tasks import users as U
+
+    code = U.generate_link_code(uid)["link_code"]
+    assert U.link_telegram(code, 555) is not None
+    sent_log: list = []
+    N.dispatch_due(now=datetime.now(TZ) + timedelta(days=1),
+                   sender=lambda chat, text: sent_log.append(text))
+    assert any("Revisar" in t for t in sent_log)
+
+
+def test_beat_skips_no_endpoints_on_same_model():
+    """404 No-endpoints no MESMO modelo = erro de config (nunca se autocura):
+    o beat não queima tentativas nem chamadas nele. Se o modelo mudou,
+    a retentativa continua permitida."""
+    from app.main import app
+    from fastapi.testclient import TestClient
+
+    from app.tasks.extract import _should_skip_retry, get_homework
+    from app.tasks.extract import retry_stale_extractions
+
+    client = TestClient(app)
+    h, _ = make_auth(client)
+    cid = client.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    hid = _upload_failing(client, h, cid, "Error code: 404 - No endpoints found")
+    before = (get_homework(hid).get("extraction_json") or {}).get("meta", {}).get("attempts", 0)
+    n = retry_stale_extractions(now=datetime.now(timezone.utc) + timedelta(minutes=30))
+    assert n == 0
+    after = (get_homework(hid).get("extraction_json") or {}).get("meta", {}).get("attempts", 0)
+    assert after == before
+    # unidade: mesmo modelo pula; modelo diferente ou outro erro não pula
+    row = get_homework(hid)
+    from app.core.config import get_settings
+
+    assert _should_skip_retry(row, get_settings().OPENROUTER_MODEL) is True
+    assert _should_skip_retry(row, "outro-modelo") is False
+    row2 = dict(row, extraction_json={"meta": {"last_error": "500 boom"}})
+    assert _should_skip_retry(row2, get_settings().OPENROUTER_MODEL) is False
+
+
 def test_beat_retries_stale_processing():
     from app.main import app
     from app.services.vision_openrouter import OpenRouterRateLimited
