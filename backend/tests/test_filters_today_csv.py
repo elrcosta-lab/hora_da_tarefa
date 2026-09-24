@@ -186,3 +186,28 @@ def test_filters_never_leak_other_account():
     assert client.get("/v1/homeworks", headers=h2).json()["total"] == 0
     assert client.get("/v1/homeworks/today", headers=h2).json()["due_today"] == []
     assert len(client.get("/v1/homeworks/export", headers=h2).content.decode("utf-8-sig").strip().splitlines()) == 1
+
+
+def test_listing_paginates_in_sql():
+    """A4: página vem do SQL (limit/offset + count), não de slice em memória."""
+    from app.main import app
+
+    client = TestClient(app)
+    h, uid = make_auth(client)
+    cid = client.post("/v1/children", json={"name": "Ana"}, headers=h).json()["id"]
+    for seed in range(5):
+        _upload(client, h, cid, seed=seed)
+    from app.tasks.extract import count_homeworks, list_homeworks
+
+    assert count_homeworks(owner_user_id=uid) == 5
+    p1 = list_homeworks(owner_user_id=uid, limit=2, offset=0)
+    p2 = list_homeworks(owner_user_id=uid, limit=2, offset=2)
+    p3 = list_homeworks(owner_user_id=uid, limit=2, offset=4)
+    assert len(p1) == 2 and len(p2) == 2 and len(p3) == 1
+    assert [r["homework_id"] for r in p1 + p2 + p3] == [
+        r["homework_id"] for r in list_homeworks(owner_user_id=uid)]
+    r = client.get("/v1/homeworks", params={"page": 2, "page_size": 2}, headers=h)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 5 and len(body["items"]) == 2
+    assert [i["id"] for i in body["items"]] == [x["homework_id"] for x in p2]

@@ -9,6 +9,7 @@ from app.tasks import routine as R
 from app.tasks.extract import (
     StatusConflict,
     accept_suggestion,
+    count_homeworks,
     detect_mime,
     export_csv,
     get_homework,
@@ -96,12 +97,13 @@ def list_homeworks_view(child_id: str | None = None, status: str | None = None,
             return _error("FORBIDDEN", "Sem acesso a esta criança.", 403)
     status_list = [t.strip() for t in status.split(",") if t.strip()] if status else None
     page_size = max(1, min(page_size, 100))
-    items = list_homeworks(child_id=child_id, owner_user_id=owner, status=status_list,
-                           subject=subject, due_before=due_before, due_after=due_after,
-                           q=q, sort=sort)
-    total = len(items)
+    # A4: total via COUNT + página via LIMIT/OFFSET (sem carregar tudo)
+    total = count_homeworks(child_id=child_id, owner_user_id=owner, status=status_list,
+                            subject=subject, due_before=due_before, due_after=due_after, q=q)
     start = (page - 1) * page_size
-    page_items = items[start : start + page_size]
+    page_items = list_homeworks(child_id=child_id, owner_user_id=owner, status=status_list,
+                                subject=subject, due_before=due_before, due_after=due_after,
+                                q=q, sort=sort, limit=page_size, offset=start)
     return {
         "items": [
             {
