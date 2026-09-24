@@ -1051,6 +1051,7 @@ Começa {{scheduled_start | HH:mm}}. Vai dar tempo? 💪
 - Respeitar `quiet_hours`: lembretes fora da janela são adiados para o início da janela.
 - `can_receive_notifications=false` no `guardian` → pula.
 - Retry: falha por destinatário incrementa `attempts` com `error` registrado; na 3ª falha → `failed` (não tenta mais). Falha de um não derruba o tick (`run_beat_tick` em `app/tasks/beat.py`).
+- **Tarefa em status terminal nunca gera envio (bug 2026-09-24):** `dispatch_due` reconfere `homework.status` no momento do envio — terminal (`concluida`, `nao_realizada`, `cancelada`, `arquivada`) marca o pendente como `cancelled` em vez de enviar; `transition_homework` para status terminal cancela os `scheduled` restantes; `schedule_for_homework` de tarefa terminal retorna `[]`.
 
 ---
 

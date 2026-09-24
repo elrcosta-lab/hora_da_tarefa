@@ -528,7 +528,11 @@ class StatusConflict(Exception):
 
 
 def transition_homework(homework_id: str, new_status: str) -> dict:
-    """Transição validada pela FSM. Levanta StatusConflict fora da matriz, KeyError se inexistente."""
+    """Transição validada pela FSM. Levanta StatusConflict fora da matriz, KeyError se inexistente.
+
+    Entrada em status terminal cancela lembretes scheduled restantes
+    (nada a cobrar de tarefa concluída/cancelada — bug 2026-09-24).
+    """
     with session_scope() as s:
         hw = s.get(Homework, homework_id)
         if hw is None:
@@ -540,7 +544,15 @@ def transition_homework(homework_id: str, new_status: str) -> dict:
             hw.status = new_status
             hw.updated_at = datetime.now(timezone.utc)
             s.flush()
-        return _to_dict(hw)
+        rec = _to_dict(hw)
+    if rec.get("status") in TERMINAL:
+        try:
+            from app.tasks import notify as _N
+
+            _N.cancel_scheduled(homework_id)
+        except Exception:
+            pass
+    return rec
 
 
 def mark_overdue(now: str | None = None) -> list[str]:

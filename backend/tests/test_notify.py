@@ -144,3 +144,31 @@ def test_atraso_scheduled_when_overdue_and_list_endpoint():
     r = c.get("/v1/notifications", params={"homework_id": hid}, headers=h)
     assert r.status_code == 200
     assert r.json()["total"] >= 1
+
+
+def test_dispatch_skips_concluded_homework():
+    """Bug real (2026-09-24): lembrete_2h enviado de manhã p/ tarefa concluída à noite.
+
+    dispatch_due NÃO deve enviar nada de homework em status terminal;
+    pendentes devem ser marcados cancelled. Transição p/ terminal também
+    cancela os scheduled restantes (defesa em profundidade).
+    """
+    from app.tasks import notify as N
+    from app.tasks.extract import transition_homework
+
+    c = _client()
+    h, cid = _setup(c)
+    hid = _upload_with_due(c, h, cid, due="2026-09-25")
+    # escoa a FSM até concluída: pendente → em_andamento → concluida
+    transition_homework(hid, "em_andamento")
+    transition_homework(hid, "concluida")
+    # mesmo com tudo vencido, nada deve ser enviado
+    sent_log: list = []
+    sent = N.dispatch_due(now=datetime(2026, 9, 26, 12, 0, tzinfo=TZ),
+                          sender=lambda chat, text: sent_log.append((chat, text)))
+    assert sent == []
+    assert sent_log == []
+    remaining = [r for r in N.list_notifications(homework_id=hid) if r["status"] == "scheduled"]
+    assert remaining == []
+    # e nada novo deve ser agendado p/ tarefa terminal
+    assert N.schedule_for_homework(hid) == []

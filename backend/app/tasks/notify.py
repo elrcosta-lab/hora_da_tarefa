@@ -123,12 +123,17 @@ def _upsert(s, kind: str, hw_id: str, child_id: str, scheduled_for: datetime) ->
 
 
 def schedule_for_homework(homework_id: str, now: datetime | None = None) -> list[dict]:
-    """Cria sugestao_inicial + 24h/2h + atraso (se vencido). Idempotente por key."""
+    """Cria sugestao_inicial + 24h/2h + atraso (se vencido). Idempotente por key.
+
+    Tarefa em status terminal: nada a agendar (retorna []).
+    """
     from app.tasks.extract import get_homework
 
     rec = get_homework(homework_id)
     if rec is None:
         raise KeyError(homework_id)
+    if (rec.get("status") or "") in TERMINAL_HW:
+        return []
     now = now or datetime.now(TZ)
     child_id = rec.get("child_id")
     settings = get_settings(child_id)
@@ -179,11 +184,30 @@ def _recipient_chat(homework_id: str) -> int | None:
         return int(u.telegram_user_id) if u and u.telegram_user_id else None
 
 
+def _homework_status(homework_id: str) -> str | None:
+    """Status atual da tarefa (None se inexistente). Leitura direta p/ evitar import circular."""
+    from app.models import Homework
+
+    with session_scope() as s:
+        hw = s.get(Homework, homework_id)
+        return hw.status if hw else None
+
+
+def cancel_scheduled(homework_id: str) -> int:
+    """Marca como cancelled todos os lembretes ainda scheduled da tarefa. Retorna qtd."""
+    with session_scope() as s:
+        rows = s.query(NotificationLog).filter_by(homework_id=homework_id, status="scheduled").all()
+        for rec in rows:
+            rec.status = "cancelled"
+        s.flush()
+        return len(rows)
+
+
 def dispatch_due(now: datetime | None = None, sender=None, stats: dict | None = None) -> list[dict]:
     """Beat: envia tudo scheduled com scheduled_for <= now (uma única vez cada).
 
-    sender(chat_id, text): quando fornecido e há dono vinculado, entrega via
-    Telegram antes de marcar sent. Falha por destinatário: attempts++, erro
+    Tarefa em status terminal (concluída/cancelada/...) NÃO gera envio:
+    o pendente é marcado cancelled. Falha por destinatário: attempts++, erro
     registrado; na 3ª falha → status failed (não tenta mais). Falha de um não
     derruba os demais. Sem sender/dono, só marca sent (modo teste).
     stats (opcional): dict preenchido com {"sent": n, "errors": n}.
@@ -199,6 +223,11 @@ def dispatch_due(now: datetime | None = None, sender=None, stats: dict | None = 
             if sf and sf <= now:
                 due_rows.append(rec)
         for rec in due_rows:
+            # tarefa concluída/cancelada/arquivada: nunca enviar; cancela o pendente
+            if (_homework_status(rec.homework_id) or "") in TERMINAL_HW:
+                rec.status = "cancelled"
+                s.flush()
+                continue
             if sender is not None:
                 chat = _recipient_chat(rec.homework_id)
                 if chat is not None:
