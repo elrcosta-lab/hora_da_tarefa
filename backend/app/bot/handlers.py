@@ -150,12 +150,19 @@ def _render_dedupe(rec: dict) -> str:
 
 
 def _render_task_line(r: dict, child_names: dict) -> str:
-    """Linha de tarefa p/ /hoje e /tarefas: criança · matéria — título (sem '?')."""
+    """Linha de tarefa p/ /hoje e /tarefas: criança · matéria — título [status] (id).
+
+    O id curto (8 chars) é obrigatório: é o que o /concluir <id> pede
+    (bug 2026-09-24: as linhas não mostravam id algum). Sem título,
+    o próprio id curto ocupa o lugar do título (sem duplicar).
+    """
     kid = child_names.get(r.get("child_id") or "", "Sem criança")
     subject = r.get("subject") or "Sem matéria"
-    title = r.get("title") or r["homework_id"][:8]
+    short = r["homework_id"][:8]
+    title = r.get("title") or short
     status = f" [{r.get('status')}]" if r.get("status") else ""
-    return f"• {kid} · {subject} — {title}{status}"
+    suffix = f" ({short})" if r.get("title") else ""
+    return f"• {kid} · {subject} — {title}{status}{suffix}"
 
 
 def _child_names(owner_user_id: str | None) -> dict:

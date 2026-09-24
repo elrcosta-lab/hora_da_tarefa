@@ -971,7 +971,7 @@ rechama a API. `GET /v1/usage` soma tokens e estima US$ por conta
 | Comando | Descrição | Resposta |
 |---|---|---|
 | `/start` | Boas-vindas + vínculo | Se sem vínculo, pede código de pareamento; senão mostra menu. |
-| `/tarefas` | Lista tarefas ativas | Linhas `• {{child_name}} · {{subject ou "Sem matéria"}} — {{title ou id}} [{{status}}]`. |
+| `/tarefas` | Lista tarefas ativas | Linhas `• {{child_name}} · {{subject ou "Sem matéria"}} — {{title}} [{{status}}] ({{id curto 8 chars}})`; sem título, o id curto ocupa o lugar do título. O id curto é o que o `/concluir <id>` aceita (prefixo). |
 | `/hoje` | Agenda do dia | Mesmo formato de linha do `/tarefas`; nunca exibe `?`. |
 | `/concluir <id>` | Marca concluída | Atalho; também via botão "Concluir". |
 | `/criancas` | Lista/troca criança | Define contexto ao enviar foto. |

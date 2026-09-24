@@ -154,6 +154,33 @@ def test_hoje_shows_child_name_without_subject():
     assert "? —" not in sent
 
 
+def test_task_lines_show_short_id_for_concluir():
+    """Bug real (2026-09-24): /concluir pede o id mas /tarefas e /hoje não mostram.
+
+    Cada linha deve trazer o id curto (8 chars) para o /concluir <id> ser usável.
+    """
+    from app.tasks import routine as R
+    from app.tasks.extract import get_or_create_homework, update_homework_fields
+
+    linked = _link(13)
+    kid = R.create_child("Bia", owner_user_id=linked["user_id"])
+    rec, _ = get_or_create_homework(b"bytes-com-titulo", child_id=kid["id"],
+                                    created_by_user_id=linked["user_id"])
+    update_homework_fields(rec["homework_id"], title="Lição de casa", subject="Mat")
+    short = rec["homework_id"][:8]
+    c = _client()
+    from app.bot.handlers import last_sent
+
+    for update_id, cmd, chat in ((43, "/tarefas", 13), (44, "/hoje", 13)):
+        r = c.post("/v1/telegram/webhook", headers=_headers(), json={
+            "update_id": update_id,
+            "message": {"message_id": 7, "from": {"id": chat}, "chat": {"id": chat}, "text": cmd},
+        })
+        assert r.status_code == 200
+        sent = last_sent(chat) or ""
+        assert short in sent, f"{cmd} não mostra o id curto: {sent!r}"
+
+
 def test_concluir_command_updates_status():
     from tests.conftest import make_auth
 
