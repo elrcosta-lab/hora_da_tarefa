@@ -219,6 +219,36 @@ def test_due_inferred_from_next_class():
     assert infer_due_from_grade(child["id"], None) is None
 
 
+def test_due_skips_class_already_started_today():
+    """Bug real (2026-09-24): foto 15:15 de qui com aula de Matemática 13:00-13:40
+    inferiu entrega HOJE 23:59 (aula já terminada) em vez de seg 28/09.
+    Aula de hoje só conta se ainda não começou; 'para casa' é sempre p/ próxima aula.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.tasks.extract import infer_due_from_grade
+    from app.tasks import routine as R
+
+    child = R.create_child("Bia")
+    R.save_schedules(child["id"], [
+        {"weekday": 3, "start_time": "13:00", "end_time": "13:40", "subject": "Matemática"},
+        {"weekday": 0, "start_time": "15:00", "end_time": "15:40", "subject": "Matemática"},
+    ], replace=True)
+    # qui 24/09 15:15, aula de hoje já terminou → seg 28/09 23:59
+    due = infer_due_from_grade(child["id"], "Matemática",
+                               now=datetime(2026, 9, 24, 15, 15, tzinfo=ZoneInfo("America/Sao_Paulo")))
+    assert due is not None and due.isoformat()[:10] == "2026-09-28" and due.hour == 23
+    # qui 24/09 13:15, aula EM ANDAMENTO → também pula para seg 28/09
+    due2 = infer_due_from_grade(child["id"], "Matemática",
+                                now=datetime(2026, 9, 24, 13, 15, tzinfo=ZoneInfo("America/Sao_Paulo")))
+    assert due2 is not None and due2.isoformat()[:10] == "2026-09-28"
+    # qui 24/09 08:00, aula de hoje ainda nem começou → hoje 23:59 vale
+    due3 = infer_due_from_grade(child["id"], "Matemática",
+                                now=datetime(2026, 9, 24, 8, 0, tzinfo=ZoneInfo("America/Sao_Paulo")))
+    assert due3 is not None and due3.isoformat()[:10] == "2026-09-24"
+
+
 def test_extraction_without_date_uses_grade_inference():
     import io
     import uuid

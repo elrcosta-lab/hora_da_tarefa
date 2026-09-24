@@ -86,4 +86,31 @@ def test_deterministic_tiebreak_earliest_first():
     s1 = suggest_slots(**inp, limit=5)
     s2 = suggest_slots(**inp, limit=5)
     assert [x["start_at"] for x in s1] == [x["start_at"] for x in s2]
-    assert s1[0]["start_at"] <= s1[1]["start_at"]
+    # ordem = score desc (diversidade entre dias); empate de score = menor data
+    assert all(a["score"] >= b["score"] for a, b in zip(s1, s1[1:]))
+
+
+def test_top_slots_spread_across_days():
+    """Bug real (2026-09-24): top-3 eram 19:00/19:15/19:30 do mesmo dia.
+    Com horizonte de vários dias, as melhores opções devem variar o dia
+    (1 por dia na 1ª passada); só completa no mesmo dia se faltar opção.
+    """
+    from app.services.scheduling import suggest_slots
+
+    inp = _base()
+    inp["schedules"] = []
+    inp["activities"] = []
+    slots = suggest_slots(**inp, limit=3)
+    assert len(slots) == 3
+    assert len({s["start_at"].date() for s in slots}) == 3
+
+
+def test_single_day_horizon_still_fills_limit():
+    """Horizonte de 1 dia: sem outro dia disponível, completa no mesmo dia."""
+    from app.services.scheduling import suggest_slots
+
+    inp = _base(homework_over={"due_at": _dt(22, 21, 0)})
+    inp["schedules"] = []
+    inp["activities"] = []
+    slots = suggest_slots(**inp, limit=3)
+    assert len(slots) == 3

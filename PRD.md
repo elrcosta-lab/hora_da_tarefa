@@ -462,7 +462,7 @@ flowchart TD
          - w5 * custo_deslocamento
    ```
    Pesos padrão: `w1=0.35, w2=0.30, w3=0.15, w4=0.15, w5=0.05` (tunáveis por conta).
-6. **Escolher:** maior score; empate → menor data, depois horário mais próximo do início da janela produtiva.
+6. **Escolher:** maior score; empate → menor data, depois horário mais próximo do início da janela produtiva. O top-N diversifica por dia (1 por dia primeiro; completa e reordena por score se o horizonte for curto) — nunca 3 opções coladas na mesma noite.
 7. **Persistir e agendar lembretes:** cria evento e agenda offsets (24h, 2h, 10 min antes do slot).
 8. **Exceção:** se nenhum slot couber → status `sem_slot`, alerta imediato ao responsável com sugestão de relaxar regras (ex.: usar horário pós-jantar, permitir faltar atividade "pode faltar").
 

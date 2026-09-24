@@ -704,10 +704,13 @@ function suggest_slots(input) -> list[Slot]:
     for slot in candidates:
         slot.score = score(slot, input, busy)
 
-    # 4. Diversificar por dia e ranquear
-    ranked = candidates.sort_by(score desc)
-    ranked = limit_max_per_day(ranked, max_slots_per_day)
-    return top_n(ranked, N=5)
+    # 4. Diversificar por dia e ranquear (saída sempre em ordem desc de score)
+    ranked = candidates.sort_by(score desc, start asc)
+    diversified = pick_at_most_1_per_day(ranked, N)   # top-1 de cada dia, em ordem de score
+    if len(diversified) < N:
+        rest = pick_up_to_max_per_day(ranked - diversified, N - len(diversified))
+        diversified = sort_by_score_desc(diversified + rest)  # merge reordenado
+    return top_n(diversified, N=5)
 
 
 function score(slot, input, busy) -> float:
@@ -922,6 +925,8 @@ resp = client.chat.completions.create(
    "matéria + professor" grudados, ex. `MATEMATICA ELOISA` → `Matemática`;
    genéricos `Aula`/`Outro` nunca casam): próxima ocorrência em 14 dias → 23:59,
    sempre com `needs_review=true` (`meta.due_inferred_from=grade`).
+   **Aula de hoje só conta se ainda não começou** (bug 2026-09-24: "para casa"
+   dado à tarde com aula 13:00 inferia entrega hoje; é sempre p/ próxima aula).
 3. **Sem grade/match** — `due_at` null, horizonte +7d e revisão manual.
    Sem data de envio explícita usa-se `now` (criação).
 

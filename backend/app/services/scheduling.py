@@ -279,19 +279,32 @@ def suggest_slots(homework, schedules=None, activities=None, preferences=None, n
             cur += timedelta(minutes=GRID_MINUTES)
         d += timedelta(days=1)
 
-    # 4. rank determinístico: maior score, depois menor data
+    # 4. rank determinístico: maior score, depois menor data.
+    # Diversidade primeiro (bug 2026-09-24: top-3 eram 19:00/19:15/19:30 do
+    # mesmo dia): 1ª passada 1 por dia; se faltar p/ o limite, completa com os
+    # melhores restantes e reordena — a saída segue sempre em ordem desc de
+    # score (contrato da API: ranks refletem o score exibido).
     candidates.sort(key=lambda c: (-c["score"], c["start_at"]))
-    per_day: dict = {}
-    ranked = []
-    for c in candidates:
-        k = c["start_at"].date()
-        per_day[k] = per_day.get(k, 0)
-        if per_day[k] >= max_per_day:
-            continue
-        per_day[k] += 1
-        ranked.append(c)
-        if len(ranked) >= limit:
-            break
+
+    def _pick(pool: list, cap: int, need: int, counts: dict) -> list:
+        out = []
+        for c in pool:
+            if len(out) >= need:
+                break
+            k = c["start_at"].date()
+            if counts.get(k, 0) >= cap:
+                continue
+            counts[k] = counts.get(k, 0) + 1
+            out.append(c)
+        return out
+
+    counts: dict = {}
+    ranked = _pick(candidates, min(1, max_per_day), limit, counts)
+    if len(ranked) < limit:
+        taken = {id(c) for c in ranked}
+        rest = _pick([c for c in candidates if id(c) not in taken],
+                     max_per_day, limit - len(ranked), counts)
+        ranked = sorted(ranked + rest, key=lambda c: (-c["score"], c["start_at"]))
     for i, c in enumerate(ranked, 1):
         c["rank"] = i
     return ranked

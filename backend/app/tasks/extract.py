@@ -243,6 +243,10 @@ def infer_due_from_grade(child_id: str, subject: str | None, now=None):
 
     Ordem de resolução da entrega: 1) data do professor na foto, 2) esta
     inferência, 3) null (horizonte +7d + revisão manual).
+
+    Aula de HOJE só conta se ainda não começou (bug 2026-09-24: foto 15:15
+    com aula 13:00-13:40 inferia entrega hoje; 'para casa' é sempre p/ a
+    próxima aula, nunca p/ aula em andamento ou já terminada).
     """
     from datetime import datetime as _dt
     from datetime import timedelta as _td
@@ -260,6 +264,15 @@ def infer_due_from_grade(child_id: str, subject: str | None, now=None):
     if now.tzinfo is None:
         now = now.replace(tzinfo=ZoneInfo("America/Sao_Paulo"))
     want_n = normalize_subject(want)[0]
+    now_hm = now.hour * 60 + now.minute
+
+    def _already_started(start_s: str | None) -> bool:
+        try:
+            h, m = str(start_s or "").split(":")[:2]
+            return now_hm >= int(h) * 60 + int(m)
+        except (ValueError, AttributeError):
+            return False
+
     for delta in range(14):
         day = (now + _td(days=delta)).date()
         wd = day.weekday()
@@ -267,6 +280,8 @@ def infer_due_from_grade(child_id: str, subject: str | None, now=None):
             if int(s.get("weekday", -1)) != wd:
                 continue
             if normalize_subject(s.get("subject") or "")[0] == want_n:
+                if delta == 0 and _already_started(s.get("start_time")):
+                    continue
                 return _dt(day.year, day.month, day.day, 23, 59,
                            tzinfo=ZoneInfo("America/Sao_Paulo"))
     return None
