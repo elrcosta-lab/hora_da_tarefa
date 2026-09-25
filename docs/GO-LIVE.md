@@ -1,4 +1,4 @@
-# Runbook de Go-Live (beta) — Hora da Tarefa
+# Runbook de Go-Live (beta) — Hora da Tarefa (v1.4, 2026-09-25)
 
 > **Regra de ouro: nenhum segredo entra no git.** `OPENROUTER_API_KEY`,
 > `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `POSTGRES_PASSWORD`,
@@ -10,7 +10,7 @@
 
 - [ ] VPS com Docker Engine + plugin compose (este repo já subiu com `docker-ce`)
 - [ ] Domínio apontando para a VPS (ex.: `app.horadatarefa.com` + `api.horadatarefa.com`)
-- [ ] Conta OpenRouter **com crédito** (modelo pago `nex-agi/nex-n2.5-mini`) + `OPENROUTER_API_KEY` (`sk-or-v1-...`)
+- [ ] Conta OpenRouter + `OPENROUTER_API_KEY` (`sk-or-v1-...`) — modelo padrão `nex-agi/nex-n2.5-mini:free` (tier pago delistado em 2026-09-24; sem crédito obrigatório)
 - [ ] Bot `@hora_da_tarefa_bot` (BotFather) — token e comandos **já configurados** (ver §1)
 
 ## 1. Telegram — status atual
@@ -74,16 +74,18 @@ ssh -i $SSH_KEY $VPS "cd /opt/hora_da_tarefa && docker compose build -q api \
 # esperado: {"ok":true,"checks":{"api":"up"}}
 ```
 
+> Portas: no compose base o Caddy escuta `:80` e o web `:3000`. No QA local o `docker-compose.override.yml` (gitignored) remapeia para `8081` e `3100` — é por isso que o runbook e o README citam `localhost:8081/3100`. Na VPS há override próprio (só remapeia `caddy→8081`, `web→3100`, pois o nginx do host ocupa 80/443).
+
 ```bash
 # primeira subida (na VPS)
 docker compose up -d --build
 docker compose ps                    # todos healthy
-docker compose logs api | grep -i alembic   # 0001→0011 aplicadas
+docker compose logs api | grep -i alembic   # 0001→0012 aplicadas
 ```
 
-Roteiro funcional (navegador + Telegram): registro com consentimento → **aprovação do admin (abaixo)** → onboarding (filho → grade → código) → `/start <código>` → foto → revisão → agendar → `/hoje` → concluir → CSV em Tarefas.
+Roteiro funcional (navegador + Telegram): registro com consentimento → **aprovação do admin (abaixo, RF-24)** → onboarding (filho → grade → código) → `/start <código>` → foto → revisão → agendar → `/hoje` → concluir (bot aceita id curto de 8 chars) → CSV em Tarefas.
 
-**Aprovar/rejeitar contas (RF-16):** sem UI de admin no beta — via API com token do admin:
+**Aprovar/rejeitar contas (RF-24):** sem UI de admin no beta — via API com token do admin:
 ```bash
 export AT="<access_token do admin>"
 curl -s http://localhost:8081/v1/admin/users | python3 -c "import json,sys; [print(u['user_id'], u['email'], u['status']) for u in json.load(sys.stdin)['items']]"
@@ -94,8 +96,9 @@ curl -s -X POST http://localhost:8081/v1/admin/users/<user_id>/approve -H "Autho
 ## 5. Operação e rollback
 
 - **Logs:** `docker compose logs -f api` (sem PII/imagem/base64 por construção)
-- **Beat:** tick 1/min + purge 1x/dia dentro da API (`BEAT_ENABLED=false` desliga)
-- **Fila OpenRouter 429:** backoff automático 1/5/30 min (3 retries); `AI_WORKER_CONCURRENCY=3` no `.env`; custo por conta em `GET /v1/usage`
+- **Beat:** tick 1/min + purge 1x/dia dentro da API (`BEAT_ENABLED=false` desliga). Entrega via `_select_sender`: direta (Bot API) em live, outbox descarregado pelo polling em modo polling, nada fora disso. Tarefa em status terminal nunca gera envio (pendentes viram `cancelled`).
+- **Fila OpenRouter 429 (tier `:free`):** backoff automático 1/5/30 min (3 retries); 404 No-endpoints não retenta (modelo morto — trocar `OPENROUTER_MODEL`); `AI_WORKER_CONCURRENCY=3` no `.env`; custo por conta em `GET /v1/usage`
+- **Compose respeita o `.env`:** `TELEGRAM_LIVE_SEND` e `OPENROUTER_MODEL` usam `${VAR:-default}` (sem valor fixo no YAML)
 - **Rollback:** sem git na VPS — reenvie via `rsync` a versão anterior do arquivo + `docker compose build -q api && docker compose up -d api`; migrations reversíveis (`docker compose exec api alembic -c /app/alembic.ini downgrade -1`)
 - **Backup:** volume `pgdata` (descubra o nome real com `docker volume ls | grep pgdata`): `docker run --rm -v <projeto>_pgdata:/data -v /opt/hora_da_tarefa/backup:/b ...`
 

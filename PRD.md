@@ -1,8 +1,8 @@
 # PRD — Hora da Tarefa
 
 > **Status:** Beta (VPS)
-> **Versão:** 1.3 (aprovação de contas)
-> **Última atualização:** 2026-09-23
+> **Versão:** 1.4 (aprovação de contas como RF-24 + modelo :free como padrão)
+> **Última atualização:** 2026-09-25
 > **Responsável:** Product Owner (a definir)
 > **Classificação:** Documento de requisitos de produto (PRD)
 
@@ -12,9 +12,9 @@
 
 ### 1.1 Resumo Executivo
 
-O **Hora da Tarefa** é um SaaS que ajuda pais e responsáveis a organizar a lição de casa dos filhos de ponta a ponta. O responsável envia uma foto da tarefa (caderno, agenda ou bilhete escolar) via app web ou Telegram; o modelo multimodal `nex-agi/nex-n2.5-mini` via API OpenRouter (OpenAI-compatible, `https://openrouter.ai/api/v1`) recebe imagem + texto e extrai data de envio, data de entrega, matéria e enunciado em JSON validado. O sistema cruza essas informações com a grade escolar e as atividades extraescolares da criança para sugerir automaticamente o melhor dia e horário livre, e então dispara lembretes e cobranças de conclusão via bot do Telegram.
+O **Hora da Tarefa** é um SaaS que ajuda pais e responsáveis a organizar a lição de casa dos filhos de ponta a ponta. O responsável envia uma foto da tarefa (caderno, agenda ou bilhete escolar) via app web ou Telegram; o modelo multimodal `nex-agi/nex-n2.5-mini:free` via API OpenRouter (OpenAI-compatible, `https://openrouter.ai/api/v1`) recebe imagem + texto e extrai data de envio, data de entrega, matéria e enunciado em JSON validado. O sistema cruza essas informações com a grade escolar e as atividades extraescolares da criança para sugerir automaticamente o melhor dia e horário livre, e então dispara lembretes e cobranças de conclusão via bot do Telegram.
 
-O valor central é **transformar uma foto desorganizada em um compromisso agendado, lembrado e concluído** — sem planilhas, sem esquecimentos e com custo zero de IA (OpenRouter tier gratuito, sem VLM local na VPS).
+O valor central é **transformar uma foto desorganizada em um compromisso agendado, lembrado e concluído** — sem planilhas, sem esquecimentos e com custo zero de IA no tier gratuito (o tier pago foi delistado pelo provedor em 2026-09-24 — ver SPECS §5.5).
 
 ### 1.2 Problema
 
@@ -23,17 +23,17 @@ Pais e responsáveis enfrentam diariamente:
 - **Fragmentação da informação:** a lição chega por caderno, agenda de papel, bilhete, grupo de WhatsApp da escola e fala do filho — nunca em um só lugar.
 - **Falta de contexto de tempo:** mesmo sabendo da tarefa, o responsável não sabe *quando* a criança terá tempo livre, considerando aula, natação, inglês, terapia e sono.
 - **Esquecimento e atraso:** entregas perdidas geram cobrança da escola e conflito familiar.
-- **Custo de ferramentas de IA:** soluções que usam APIs de visão pagas (GPT-4o, Gemini Pro) cobram por imagem e por token, inviabilizando preço popular no Brasil. O MVP usa o OpenRouter no tier gratuito (`nex-agi/nex-n2.5-mini:free`, multimodal texto+imagem, 262k contexto, US$ 0), com rate limit gerenciado por fila + retry (o tier pago foi delistado pelo provedor em 2026-09-24 — ver SPECS §5.5).
+- **Custo de ferramentas de IA:** soluções que usam APIs de visão pagas (GPT-4o, Gemini Pro) cobram por imagem e por token, inviabilizando preço popular no Brasil. O produto usa o OpenRouter no tier gratuito (`nex-agi/nex-n2.5-mini:free`, multimodal texto+imagem, 262k contexto, US$ 0), com rate limit gerenciado por fila + retry (o tier pago foi delistado pelo provedor em 2026-09-24 — ver SPECS §5.5).
 - **Sobrecarga cognitiva:** a "gestão da lição de casa" hoje é feita de memória e boa vontade, sem sistema de acompanhamento nem histórico.
 
-**Por que agora:** modelos multimodais via OpenRouter (Nex-N2.5-Mini — MoE multimodal 35B/3B ativos, 262k contexto) entregam OCR + extração semântica direto da imagem via API, sem precisar de GPU/VPS parruda — hoje no tier **gratuito** (o pago foi delistado em 2026-09-24), com backoff + retry + revisão manual como rede de segurança. Isso elimina a complexidade de VLM quantizado local (SmolVLM2, Moondream2, Qwen2-VL-2B em CPU) e libera a VPS de 1 vCPU / 4GB para só API + banco + fila. Privacidade é tratada por anonimização pré-envio (redimensionar, remover EXIF, hash SHA-256, sem PII em logs; a LLM recebe derivada de 1024px, original íntegro no storage).
+**Por que agora:** modelos multimodais via OpenRouter (Nex-N2.5-Mini — MoE multimodal 35B/3B ativos, 262k contexto) entregam OCR + extração semântica direto da imagem via API, sem precisar de GPU/VPS parruda — hoje no tier **gratuito** (`:free`; o pago foi delistado em 2026-09-24), com backoff + retry + revisão manual como rede de segurança. Isso elimina a complexidade de VLM quantizado local (SmolVLM2, Moondream2, Qwen2-VL-2B em CPU) e libera a VPS de 1 vCPU / 4GB para só API + banco + fila. Privacidade é tratada por anonimização pré-envio (redimensionar, remover EXIF, hash SHA-256, sem PII em logs; a LLM recebe derivada de 1024px, original íntegro no storage).
 
 ### 1.3 Solução Proposta
 
 Um fluxo em quatro etapas:
 
 1. **Entrada por foto** — responsável envia imagem no Telegram (ou web upload).
-2. **Extração via OpenRouter** — anonimização local (resize, strip EXIF, hash) + chamada multimodal ao `nex-agi/nex-n2.5-mini` que devolve **JSON validado por schema** (sem OCR/VLM local).
+2. **Extração via OpenRouter** — anonimização local (resize, strip EXIF, hash) + chamada multimodal ao `nex-agi/nex-n2.5-mini:free` que devolve **JSON validado por schema** (sem OCR/VLM local).
 3. **Motor de agendamento** — cruza matéria, prazo e disponibilidade da criança (grade escolar + atividades fixas + sono + deslocamento) e calcula o(s) slot(s) livres com folga.
 4. **Orquestração por Telegram** — confirma o agendamento, envia lembretes (24h/2h antes) e coleta a confirmação de conclusão, alimentando um dashboard de status.
 
@@ -44,7 +44,7 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 - **Objetivo 1:** Reduzir o tempo de registro de uma tarefa de ~3 minutos (digitação) para **≤ 30 segundos** (foto + confirmação).
 - **Objetivo 2:** Atingir **≥ 85% de precisão** de extração automática nos campos críticos (data de entrega e matéria), com revisão humana no restante.
 - **Objetivo 3:** Reduzir a taxa de tarefas atrasadas em **≥ 40%** nos primeiros 60 dias de uso por família ativa.
-- **Objetivo 4:** Operar o núcleo de IA a **custo marginal zero por imagem** (`nex-agi/nex-n2.5-mini:free`), sem VLM local. Monitorar tokens e erros mensais (logs em `extraction_json.meta`); manter backoff + cache por hash + aviso de falha ao usuário.
+- **Objetivo 4:** Operar o núcleo de IA a **custo marginal zero por imagem** (`nex-agi/nex-n2.5-mini:free`), sem VLM local. Monitorar tokens e erros mensais (logs em `extraction_json.meta`); manter backoff + cache por hash + aviso `extracao_falhou` ao usuário quando os 3 retries esgotarem.
 - **Objetivo 5:** Manter o stack completo rodando em **1 vCPU / 4GB RAM / 50GB disco** (sem carga de IA local — só API, Postgres, Redis, bot).
 
 ### 1.5 Não-Objetivos (Out of Scope estratégico)
@@ -150,6 +150,7 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 | RF-12 | Filtros, busca e histórico | Should | Médio |
 | RF-13 | Multi-criança | Should | Alto |
 | RF-14 | Multi-responsável e papéis | Should | Médio |
+| RF-24 | Aprovação de contas pelo admin (conta nova pendente) | Must | Alto |
 
 ### 3.3 Pós-MVP (Should remanescente + Could + futuro)
 
@@ -183,7 +184,7 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 **Critérios de aceite:**
 - Criar criança válida retorna sucesso e aparece na listagem.
 - Bloquear cadastro sem consentimento parental.
-- Conta nova nasce **pendente** e só acessa a plataforma após **aprovação do admin** (login/vínculo/bot bloqueados até lá).
+- Conta nova nasce **pendente** e só acessa a plataforma após **aprovação do admin** (RF-24: login/vínculo/bot bloqueados até lá).
 
 ### RF-02 — Cadastro de Grade Escolar (M)
 
@@ -223,11 +224,11 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 
 ### RF-05 — Pipeline Extração via OpenRouter (M)
 
-**Descrição:** Processar a imagem para extrair campos estruturados: `data_envio`, `data_entrega` (quando visível), `materia`, `enunciado`, `professor` (opcional), `confianca` por campo — via API OpenRouter modelo `nex-agi/nex-n2.5-mini` (multimodal imagem+texto, 262k contexto, structured output).
+**Descrição:** Processar a imagem para extrair campos estruturados: `data_envio`, `data_entrega` (quando visível), `materia`, `enunciado`, `professor` (opcional), `confianca` por campo — via API OpenRouter modelo `nex-agi/nex-n2.5-mini:free` (multimodal imagem+texto, 262k contexto, structured output).
 
 **Regras:**
 - Etapa 1: **Anonimização local** — valida MIME por magic bytes, auto-orienta EXIF e remove EXIF, redimensiona para máx. 1600px lado maior, converte para JPEG otimizado, calcula SHA-256 para deduplicação/cache (não reprocessa hash igual).
-- Etapa 2: **Chamada OpenRouter** — `POST https://openrouter.ai/api/v1/chat/completions` com `model=nex-agi/nex-n2.5-mini`, mensagens `[{role:user, content:[{type:text, text:prompt},{type:image_url, image_url:{url:data:image/jpeg;base64,...}}]}]`, `response_format={type:json_object}`, `max_tokens=2048`, `temperature=0.1`. Headers `Authorization: Bearer $OPENROUTER_API_KEY`, `HTTP-Referer`, `X-Title`.
+- Etapa 2: **Chamada OpenRouter** — `POST https://openrouter.ai/api/v1/chat/completions` com `model=nex-agi/nex-n2.5-mini:free`, mensagens `[{role:user, content:[{type:text, text:prompt},{type:image_url, image_url:{url:data:image/jpeg;base64,...}}]}]`, `response_format={type:json_object}`, `max_tokens=2048`, `temperature=0.1`. Headers `Authorization: Bearer $OPENROUTER_API_KEY`, `HTTP-Referer`, `X-Title`.
 - Se `confianca < 0.75` em campo crítico (data_entrega ou materia) → estado `needs_review`.
 - Normalização de datas relativas ("amanhã", "sexta") com base na data de envio.
 - Timeout da chamada: 60s com retry 1× + backoff; rate limit 429 → reenfileira com backoff exponencial (1/5/30 min, máx. 3 tentativas); ao exceder, marca `extraction_failed` e oferece entrada manual.
@@ -351,6 +352,19 @@ Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK pr
 **Critérios de aceite:**
 - `viewer` não consegue criar/editar/excluir (403 no backend).
 
+### RF-24 — Aprovação de Contas pelo Admin (M, beta)
+
+**Descrição:** Conta nova nasce com `status='pending'` e só usa a plataforma após aprovação do admin. Backfill: contas existentes migradas como `approved`; seed admin nasce `approved`.
+
+**Regras:**
+- `POST /v1/auth/register` cria sem tokens; `/login` com pendente → `403 ACCOUNT_PENDING`, rejeitada → `403 ACCOUNT_REJECTED` (credencial errada segue `401`, sem oráculo).
+- Geração de código de vínculo (`POST /v1/auth/telegram/link`), consumo no chat e gate do bot exigem `approved` (bot responde "conta em análise").
+- `POST /v1/admin/users/:id/approve` aprova; `POST /v1/admin/users/:id/reject` rejeita + revoga refresh tokens (access residual expira em ≤15 min). Admin não pode ser rejeitado (`409`).
+
+**Critérios de aceite:**
+- Conta pendente não lista/cria nada via web, vínculo ou bot.
+- Sem UI de admin no beta — aprovação via API com token do admin (ver `docs/GO-LIVE.md` §4).
+
 ---
 
 ## 5. Requisitos Não-Funcionais
@@ -360,7 +374,7 @@ Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK pr
 | RNF-01 | Performance | Extração de tarefa (foto → JSON via OpenRouter) | P50 ≤ 15s, P95 ≤ 45s; timeout 60s + 1 retry; backoff 1/5/30 min em 429 |
 | RNF-02 | Performance | Resposta da API (consultas/CRUD) | P95 < 800ms (excluindo extração) |
 | RNF-03 | Performance | Processamento concorrente de extração | Fila I/O-bound; concorrência 3–5; dedupe por SHA-256 (sem reprocessar) |
-| RNF-04 | Custo | Custo de IA por imagem | US$ 0 (OpenRouter `:free`); sem custo de infra GPU; monitorar tokens e falhas mensais |
+| RNF-04 | Custo | Custo de IA por imagem | US$ 0 (OpenRouter `:free` no padrão); sem custo de infra GPU; monitorar tokens e falhas mensais |
 | RNF-05 | Disponibilidade | Uptime do núcleo (bot + API) | ≥ 99,0% mensal, excluindo janelas de manutenção |
 | RNF-06 | Segurança | Autenticação e autorização | Hash de senha (Argon2id) ou OAuth; autorização validada no servidor; sessão expira em 30 dias |
 | RNF-07 | Segurança | Isolamento de dados de menor | Criptografia em repouso de imagens e dados sensíveis; acesso por escopo de conta/criança |
@@ -388,7 +402,7 @@ Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK pr
 
 | Componente | Tecnologia | RAM alvo | Observação |
 |---|---|---|---|
-| API/Backend | Python (FastAPI) | ~250–400 MB | Stateless, inclui cliente OpenRouter (OpenAI SDK com `base_url=https://openrouter.ai/api/v1`) |
+| API/Backend | Python (FastAPI) | ~250–400 MB | Stateless, inclui cliente OpenRouter (OpenAI SDK com `base_url=https://openrouter.ai/api/v1`) + beat APScheduler no mesmo processo |
 | Banco | PostgreSQL 16 (SQLite permitido no dev) | ~150–300 MB | `pgvector` opcional pós-MVP |
 | Cache/Fila | Redis 7 (ou fila em Postgres) | ~80–150 MB | Fila de extração (concorrência 3–5), rate limiting, cache por SHA-256, dedupe Telegram |
 | Pré-processamento imagem | Pillow (resize, strip EXIF, JPEG) | ~50–100 MB/job | Sem OCR/VLM local; máx. 1600px, JPEG q=82 |
@@ -400,10 +414,10 @@ Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK pr
 
 ### 6.3 Modelo — OpenRouter Nex-N2.5-Mini (substitui IA local)
 
-- **Modelo:** `nex-agi/nex-n2.5-mini` — MoE multimodal 35B total / 3B ativos por token, Apache 2.0, visão + raciocínio + function calling, 262k contexto, structured output.
+- **Modelo:** `nex-agi/nex-n2.5-mini:free` — MoE multimodal 35B total / 3B ativos por token, Apache 2.0, visão + raciocínio + function calling, 262k contexto, structured output. Tier pago delistado em 2026-09-24 (404 No endpoints) — `:free` é o padrão.
 - **Endpoint:** `POST https://openrouter.ai/api/v1/chat/completions` (OpenAI-compatible). SDK: `openai` Python com `base_url` + `api_key=$OPENROUTER_API_KEY`.
 - **Por que ele:** microcusto (créditos OpenRouter), dispensa GPU/CPU pesada, aceita imagem em base64/data-URL direto (sem OCR separado), responde JSON estrito com `is_homework`, `subject`, `title`, `statement`, `due_at`, `estimated_minutes`, `priority`, `confidence`, `needs_review`.
-- **Limites do tier gratuito:** 429/timeout possível em pico → fila com backoff exponencial 1/5/30 min (3 retries) + `AI_WORKER_CONCURRENCY=3` + cache por `sha256` (nunca reprocessa mesma foto) + aviso `extracao_falhou` + revisão manual se os retries falharem. 404 No-endpoints = modelo morto: não retentar, trocar `OPENROUTER_MODEL`.
+- **Limites do tier gratuito:** 429/timeout possível em pico → fila com backoff exponencial 1/5/30 min (3 retries) + `AI_WORKER_CONCURRENCY=3` + cache por `sha256` (nunca reprocessa mesma foto) + aviso `extracao_falhou` + revisão manual se os retries falharem. 404 No-endpoints = modelo morto: não retentar, trocar `OPENROUTER_MODEL` (foi o que matou o tier pago em 2026-09-24).
 - **Modelos locais anteriores (SmolVLM2, Moondream2, Qwen2-VL-2B, Llama 3.2 1B) — REMOVIDOS do MVP.** Mantidos apenas como ideia de fallback offline pós-MVP, fora de escopo.
 
 ### 6.4 Fallback e evolução (pós-MVP — RF-15 redefinido)
@@ -527,7 +541,7 @@ sequenceDiagram
 ### 8.3 Banco de Dados
 
 - **Produção:** PostgreSQL 16 (Docker). **Dev/testes:** SQLite permitido.
-- **Modelo de dados (implementado):** `app_user` (+ `refresh_token`, vínculo Telegram, papel admin), `child`, `school_schedule`, `activity`, `parent_availability`, `homework`, `homework_image`, `suggestion_slot`, `notification_setting`, `notification_log` (migrations Alembic `0001–0011`).
+- **Modelo de dados (implementado):** `app_user` (+ `refresh_token`, vínculo Telegram, papel admin, `status` p/ RF-24), `child`, `school_schedule`, `activity`, `parent_availability`, `homework`, `homework_image`, `suggestion_slot`, `notification_setting`, `notification_log` (migrations Alembic `0001–0012`).
 - **Isolamento:** toda query escopada por dono (`child.owner_user_id` / `homework.created_by_user_id`) e, quando aplicável, `child_id`; conta cruzada recebe 403.
 
 ### 8.4 Fila / Agendador
@@ -593,7 +607,7 @@ sequenceDiagram
 | **F1 — Núcleo IA** | RF-04, RF-05, RF-06 | Foto→JSON com revisão | Semana 3–5 |
 | **F2 — Agendamento** | RF-02, RF-03, RF-07 | Motor de slots validado | Semana 6–8 |
 | **F3 — Orquestração** | RF-08, RF-09, RF-10 | Bot Telegram + lifecycle + lembretes | Semana 9–11 |
-| **F4 — MVP completo** | RF-01, RF-11, RF-12, RF-13, RF-14 | MVP lançável (beta fechado) | Semana 12–14 |
+| **F4 — MVP completo** | RF-01, RF-11, RF-12, RF-13, RF-14, **RF-24** | MVP lançável (beta fechado) | Semana 12–14 |
 | **F5 — Pós-MVP** | RF-15..RF-19 | Fallback, calendário visual, relatórios | Trimestre seguinte |
 | **F6 — Escala** | RF-20..RF-23 | PWA/app, integração escolar, gamificação | 2º trimestre seguinte |
 
@@ -638,8 +652,9 @@ sequenceDiagram
 |--------|------|-------|-----------|
 | 1.0 | 2026-09-22 | Subagente PRD | Versão inicial completa (MVP + pós-MVP, IA local, motor de slots, Telegram) |
 | 1.1 | 2026-09-22 | OpenCode | Migração IA local → OpenRouter `nex-agi/nex-n2.5-mini` (substituição total, anonimização pré-envio, sem Ollama/Tesseract no caminho crítico) |
-| 1.2 | 2026-09-23 | OpenCode | Beta na VPS: modelo **pago** (`OPENROUTER_MODEL`), bot em **polling** (`RUN_MODE`), FSM real (`pendente…arquivada` + `extraction_status`), MinIO no compose, beat APScheduler, linhas do bot com nome da criança |
-| 1.3 | 2026-09-23 | OpenCode | RF-16: conta nova pendente até aprovação do admin (login/vínculo/bot bloqueados; backfill de contas existentes) |
+| 1.2 | 2026-09-23 | OpenCode | Beta na VPS: bot em **polling** (`RUN_MODE`), FSM real (`pendente…arquivada` + `extraction_status`), MinIO no compose, beat APScheduler, linhas do bot com nome da criança |
+| 1.3 | 2026-09-23 | OpenCode | Aprovação de contas (então chamada RF-16): conta nova pendente até aprovação do admin (login/vínculo/bot bloqueados; backfill de contas existentes) |
+| 1.4 | 2026-09-25 | OpenCode | Modelo `:free` como padrão (pago delistado 2026-09-24); aprovação renumerada para **RF-24** (RF-16 volta a ser calendário semanal); beat via outbox no polling, import com teto+threadpool, bot com id curto, paginação SQL, compose respeita `.env`, testes 154/migrations 0012 |
 
 ---
 

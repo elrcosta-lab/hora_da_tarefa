@@ -1,8 +1,9 @@
 # SPECS — Hora da Tarefa (SDD)
 
 > Documento de Especificação Técnica (Spec-Driven Development).
-> Autor: subagente SPEC + OpenCode · Versão: 1.3 (aprovação de contas) · Status: **Aprovada para o beta**
-> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini:free`; pago delistado em 2026-09-24) + bot em polling.
+> Autor: subagente SPEC + OpenCode · Versão: 1.4 (modelo :free padrão + RF-24) · Status: **Aprovada para o beta**
+> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini:free`; tier pago delistado em 2026-09-24) + bot em polling.
+> Última atualização: 2026-09-25.
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
 
 ---
@@ -46,7 +47,7 @@
 | Frontend | **Next.js 14 (App Router) + React + TypeScript + Tailwind CSS + shadcn/ui** | Vite + React | Export estático serve à VPS; Tailwind/shadcn casam com telas geradas no Stitch (tokens viram CSS vars). |
 | Backend | **Python 3.11 + FastAPI + Pydantic v2 + SQLAlchemy 2 + Alembic** | Node/NestJS | FastAPI integra direto com stack de IA em Python (OCR/VLM) e valida contratos com Pydantic. |
 | Banco | **PostgreSQL 16** | — | JSONB para payloads IA, `tsrange`/`tstzrange` para slots, forte em constraints. |
-| Fila/Jobs | **Background tasks FastAPI + beat APScheduler + Redis** | Celery/RQ | Sem broker externo no MVP; extração em background com backoff, beat 1/min na API, Redis p/ rate limit + dedupe |
+| Fila/Jobs | **Background tasks FastAPI + beat APScheduler + Redis** | Celery/RQ | Sem broker externo no MVP; extração em background com backoff, beat 1/min na API (entrega direta em live, outbox em polling), Redis p/ rate limit + dedupe |
 | Storage | **MinIO (S3-compatible) em volume Docker** | diretório em volume + abstração S3 | Mesma API S3 permite migrar para provedor externo sem trocar código. |
 | Bot Telegram | **Handlers próprios em Python sobre `httpx` (sem aiogram)** | grammY/Telegraf (Node) | Mesmo processo da API; polling (`RUN_MODE`) ou webhook + idempotência por `update_id` |
 | OCR | **Nenhum no caminho crítico** (Nex-N2.5-Mini lê imagem direto) | Tesseract 5 como enriquecimento futuro opcional | Removido para simplificar; reavaliar pós-MVP se manuscrito exigir |
@@ -59,20 +60,21 @@
 
 ### 0.3 Orçamento de recursos (1 vCPU / 4 GB / 50 GB — sem IA local)
 
-> **Sem VLM/Ollama na VPS.** Worker de IA é só HTTP + Pillow. Gargalo passa a ser rate limit do tier pago, não RAM.
+> **Sem VLM/Ollama na VPS.** Worker de IA é só HTTP + Pillow. Gargalo passa a ser rate limit do tier `:free`, não RAM.
 
 | Serviço | RAM alvo (limit) | CPU | Observação |
 |---|---|---|---|
-| caddy | 64 MB | 0.1 | proxy |
-| api (FastAPI, inclui cliente OpenRouter) | 384 MB | 0.5 | |
-| worker-default (notificações, agendamento) | 256 MB | 0.3 | |
-| worker-ai (anonimiza + chama OpenRouter) | 256 MB | 0.3 | **concurrency=3–5**, jobs I/O-bound; sem modelo residente |
+| caddy | 64 MB | 0.1 | proxy (`:80` no base; `:8081` via `docker-compose.override.yml` local) |
+| api (FastAPI, inclui cliente OpenRouter + beat APScheduler) | 384 MB | 0.5 | processo único; `BEAT_ENABLED=false` desliga o tick |
+| worker-default (notificações, agendamento) | 256 MB | 0.3 | lógico dentro da API (sem container separado no beta) |
+| worker-ai (anonimiza + chama OpenRouter) | 256 MB | 0.3 | **concurrency=3**, jobs I/O-bound em background; sem modelo residente |
 | postgres | 512 MB | 0.3 | `shared_buffers=128MB` |
 | redis | 128 MB | 0.1 | `maxmemory 96mb`, `noeviction` — fila IA + backoff + cache sha256 |
-| minio | 256 MB | 0.2 | |
+| minio | 256 MB | 0.2 | rede interna; sem porta publicada |
+| web (Next.js) | 512 MB | 0.3 | `:3000` no base; `:3100` via override local |
 | **Total simultâneo (pico)** | **≈1.9 GB** | ~1.6 vCPU | folga confortável em 4 GB; sem swap/OOM de IA. |
 
-**Mitigações de rate limit (tier pago em produção):** backoff exponencial 1/5/30 min (3 retries), cache/dedupe por `sha256` (nunca reprocessa mesma foto), `AI_WORKER_CONCURRENCY=3`, economia ativa de tokens (§5.6), `GET /v1/usage` com custo por conta.
+**Mitigações de rate limit (tier `:free` em produção):** backoff exponencial 1/5/30 min (3 retries), cache/dedupe por `sha256` (nunca reprocessa mesma foto), `AI_WORKER_CONCURRENCY=3`, economia ativa de tokens (§5.6), `GET /v1/usage` com custo por conta. `TELEGRAM_LIVE_SEND` e `OPENROUTER_MODEL` do `.env` são respeitados pelo compose.
 
 ### 0.4 Estrutura de repositório sugerida
 
@@ -91,8 +93,8 @@ hora_da_tarefa/
 │  │  ├─ services/      # scheduling.py, vision_openrouter.py, notify.py
 │  │  ├─ tasks/         # extract, routine, notify, users, admin, beat (persistência SQLAlchemy, sem broker)
 │  │  └─ bot/           # handlers + polling + telegram_api (httpx, sem aiogram)
-│  ├─ alembic/          # versions 0001–0011
-│  └─ tests/            # 28 arquivos, 132 testes (pytest, mocks; IA live manual)
+│  ├─ alembic/          # versions 0001–0012 (0012: status da conta p/ RF-24)
+│  └─ tests/            # 27 arquivos de teste, 154 testes (pytest, mocks; IA live manual)
 ├─ ai/prompts           # system prompt da extração (nex_system)
 └─ docs/GO-LIVE.md      # runbook de deploy (rsync + compose, sem git na VPS)
 ```
@@ -125,7 +127,7 @@ flowchart LR
 | Componente | Responsabilidade | Não faz |
 |---|---|---|
 | `api` | Autenticação, CRUD, upload, extração em background, expõe `/suggestions`, webhook Telegram | Não chama IA inline no request (responde 202 e processa em background) |
-| `extract` (background) | Anonimiza imagem (resize/strip EXIF/hash), chama OpenRouter Nex-N2.5-Mini pago, valida JSON, grava `homework` + `homework_image` | Não roda modelo local; não envia notificação |
+| `extract` (background) | Anonimiza imagem (resize/strip EXIF/hash), chama OpenRouter Nex-N2.5-Mini `:free`, valida JSON, grava `homework` + `homework_image` | Não roda modelo local; não envia notificação |
 | `scheduler` (beat) | `APScheduler` no lifespan da API: tick 1/min (`run_beat_tick` = `mark_overdue` + `dispatch_due`; entrega direta via Bot API quando `TELEGRAM_LIVE_SEND`, via outbox do polling quando `TELEGRAM_POLLING`, senão só marca — `_select_sender` em `app/tasks/beat.py`) + purge de imagens 1x/dia; `BEAT_ENABLED=false` desliga | - |
 | `bot` (httpx, sem aiogram) | Recebe update via webhook ou polling (`RUN_MODE`, `app/bot/polling.py`), valida vínculo do usuário, opera via camada `tasks` | Não expõe dados sem vínculo (§6.1 gate) |
 | `minio` | Guarda imagens originais e derivadas | - |
@@ -135,7 +137,7 @@ flowchart LR
 
 1. Pai envia foto no Telegram → bot baixa arquivo via `getFile` e registra `homework` (status `pendente`) com `child_id` (contexto ou única criança).
 2. API anonimiza (resize ≤1600px, strip EXIF, SHA-256), salva imagem em `homework_image`, responde 202 e roda a extração em background (dedupe por `sha256`: hash repetido reaproveita `extraction_json` sem chamar API).
-3. Extração chama OpenRouter `nex-agi/nex-n2.5-mini:free` (derivada 1024px + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança, `extraction_status`) → motor de agendamento grava `suggestion_slot`. Falha → `falhou` + aviso `extracao_falhou` (revisão manual).
+3. Extração chama OpenRouter `nex-agi/nex-n2.5-mini:free` (derivada 1024px + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança, `extraction_status`) → motor de agendamento grava `suggestion_slot`. Falha → `falhou` + aviso `extracao_falhou` (revisão manual, sem retry em 404 de modelo).
 4. Bot envia mensagem com sugestão e botões (`Agendar` / `Outra` / `Não é tarefa`).
 5. Beat agenda lembretes 24h/2h em `notification_log` (status `scheduled`) e dispara quando vence.
 
@@ -150,7 +152,7 @@ flowchart LR
 - Fuso: armazenar `timestamptz` (UTC); timezone do usuário em `user.timezone` (default `America/Sao_Paulo`).
 - Enums nativos do Postgres.
 - Dados de menor: ver §10 (LGPD) — nenhum dado sensível do menor além do necessário.
-- **Persistência ativa (F0, 2026-09-22):** stores in-memory removidos; `app/tasks/*` operam via SQLAlchemy (`app/core/db.py`, sessão curta por operação, retorno em dicts) sobre **Postgres 16** (prod/compose) ou **sqlite** (dev/testes via `DATABASE_URL`). Alembic `0001–0011`: núcleo (`0001`), notificações (`0002`), `app_user` + vínculo Telegram (`0003`), escopo por dono (`0004`), consentimento LGPD (`0005`), refresh tokens (`0006–0007`), disponibilidade do responsável (`0008–0009`), expiração do código de vínculo (`0010`), papel admin (`0011`). Imagens via `StorageProvider` (`app/core/storage.py`: `local` em dev/testes, `s3`/MinIO no compose com `STORAGE_BACKEND=s3`); `homework_image` persiste metadados + `expires_at` (retenção RNF-09/11 via `purge_expired_images`).
+- **Persistência ativa (F0, 2026-09-22):** stores in-memory removidos; `app/tasks/*` operam via SQLAlchemy (`app/core/db.py`, sessão curta por operação, retorno em dicts) sobre **Postgres 16** (prod/compose) ou **sqlite** (dev/testes via `DATABASE_URL`). Alembic `0001–0012`: núcleo (`0001`), notificações (`0002`), `app_user` + vínculo Telegram (`0003`), escopo por dono (`0004`), consentimento LGPD (`0005`), refresh tokens (`0006–0007`), disponibilidade do responsável (`0008–0009`), expiração do código de vínculo (`0010`), papel admin (`0011`), status da conta p/ aprovação RF-24 (`0012`, backfill `approved`). Imagens via `StorageProvider` (`app/core/storage.py`: `local` em dev/testes, `s3`/MinIO no compose com `STORAGE_BACKEND=s3`); `homework_image` persiste metadados + `expires_at` (retenção RNF-09/11 via `purge_expired_images`).
 
 ### 2.2 Enums
 
@@ -620,7 +622,7 @@ Idempotência: dedupe por `update_id` em tabela/redis (TTL 24h); updates repetid
 
 | Método | Rota | Descrição |
 |---|---|---|
-| POST | `/auth/telegram/link` | Gera `telegram_link_code` (6 dígitos, single-use) para vincular conta — `{name}` cria usuário (201) ou `{user_id}` regenera código (200); consumo no chat vincula `telegram_user_id` (gate §6.1). **Só contas `approved` geram código ou vinculam** (RF-16): pendente/rejeitada recebe 403 `ACCOUNT_PENDING`/`ACCOUNT_REJECTED` |
+| POST | `/auth/telegram/link` | Gera `telegram_link_code` (6 dígitos, single-use) para vincular conta — `{name}` cria usuário (201) ou `{user_id}` regenera código (200); consumo no chat vincula `telegram_user_id` (gate §6.1). **Só contas `approved` geram código ou vinculam** (RF-24): pendente/rejeitada recebe 403 `ACCOUNT_PENDING`/`ACCOUNT_REJECTED` |
 | GET | `/children` | Lista crianças do usuário |
 | POST | `/children` | Cria criança |
 | GET | `/children/:id/agenda` | Grade + atividades + slots ocupados |
@@ -630,8 +632,8 @@ Idempotência: dedupe por `update_id` em tabela/redis (TTL 24h); updates repetid
 | PATCH | `/homeworks/:id` | Revisão humana (RF-06): edita subject/title/statement/due_at/estimated_minutes/priority; preencher críticos promove `baixa_confianca` → `ok`; 400 em dado inválido |
 | GET | `/homeworks/today` | Dashboard Hoje: `{date, due_today[], overdue[], scheduled_today[]}` (filtro `child_id`/`date` opcional, escopo por dono) |
 | GET | `/homeworks/export` | CSV UTF-8 (com BOM p/ Excel) com os mesmos filtros de `GET /homeworks` |
-| POST | `/admin/users/:id/approve` | Admin aprova conta `pending` → `approved` (RF-16); 404 se inexistente |
-| POST | `/admin/users/:id/reject` | Admin rejeita conta → `rejected` + revoga refresh tokens (RF-16); 409 se alvo é admin |
+| POST | `/admin/users/:id/approve` | Admin aprova conta `pending` → `approved` (RF-24); 404 se inexistente |
+| POST | `/admin/users/:id/reject` | Admin rejeita conta → `rejected` + revoga refresh tokens (RF-24); 409 se alvo é admin |
 
 ---
 
@@ -954,7 +956,7 @@ AI_LLM_MAX_SIDE=1024
 AI_JPEG_QUALITY=82
 ```
 
-**Economia de tokens (custo pago):** payload da LLM em `AI_LLM_MAX_SIDE` (1024px —
+**Economia de tokens (tier `:free`, vale p/ futuro pago):** payload da LLM em `AI_LLM_MAX_SIDE` (1024px —
 ~2.4× menos tokens de visão que 1600px; original íntegro no storage),
 `max_tokens` 1024 (JSONs têm ~250), `reasoning.effort=low` (raciocínio é cobrado
 como saída), prompts instruem omitir chaves null, dedupe por `sha256` nunca
@@ -1271,7 +1273,7 @@ Funcionalidade: Upload de foto da tarefa
 |---|---|---|---|
 | Unitário | pytest | `scheduling.score`, `suggest_slots`, FSM, parser de datas, validação Pydantic, anonimização (resize/strip EXIF/hash) | sem IA, rápido |
 | Contrato | pytest + httpx | endpoints, códigos de erro, schemas | mock OpenRouter (`respx`/`responses`) |
-| Integração IA | pytest `-m ai` | OpenRouter Nex-N2.5-Mini pago com 5–10 imagens fixture (requer `OPENROUTER_API_KEY`) | **rodar manual/noturno**, respeitar 429; medir precision/recall de matéria e data |
+| Integração IA | pytest `-m ai` | OpenRouter Nex-N2.5-Mini `:free` com 5–10 imagens fixture (requer `OPENROUTER_API_KEY`) | **rodar manual/noturno**, respeitar 429; medir precision/recall de matéria e data |
 | E2E | Playwright (headless) | upload→sugestão→aceitar→notificação (Telegram mock + OpenRouter mock) | agendado |
 | Carga | Locust/K6 | 50 usuários, p95 < 800ms em `/homeworks` | janela de manutenção |
 
@@ -1321,7 +1323,7 @@ Funcionalidade: Upload de foto da tarefa
 ### 10.5 AuthN/AuthZ
 
 - JWT curto (15 min) + refresh (7 dias, rotacionável). `POST /v1/auth/register` (409 `EMAIL_TAKEN`), `/login` (401), `/refresh` (401). Senhas em Argon2id (RNF-06).
-- **Aprovação de contas (RF-16, ativo):** `register` cria com `status='pending'` (sem tokens); `/login` com pendente → 403 `ACCOUNT_PENDING`, rejeitada → 403 `ACCOUNT_REJECTED` (credencial errada segue 401, sem oráculo). `generate_link_code`, vínculo no chat e gate do bot exigem `approved` (bot responde "conta em análise"). Admin aprova/rejeita via `POST /v1/admin/users/:id/approve|reject`; reject revoga refresh tokens (access residual expira em ≤15 min). Migração `0012` com backfill `approved` p/ contas existentes; seed admin nasce `approved`.
+- **Aprovação de contas (RF-24, ativo):** `register` cria com `status='pending'` (sem tokens); `/login` com pendente → 403 `ACCOUNT_PENDING`, rejeitada → 403 `ACCOUNT_REJECTED` (credencial errada segue 401, sem oráculo). `generate_link_code`, vínculo no chat e gate do bot exigem `approved` (bot responde "conta em análise"). Admin aprova/rejeita via `POST /v1/admin/users/:id/approve|reject`; reject revoga refresh tokens (access residual expira em ≤15 min). Migração `0012` com backfill `approved` p/ contas existentes; seed admin nasce `approved`.
 - **Escopo por dono (ativo):** `child.owner_user_id` + `homework.created_by_user_id`; todas as rotas exigem Bearer (401 sem) e conta cruzada recebe 403 `FORBIDDEN` (CA-05). Migração `0004`.
 - Checagem de posse **no servidor** em toda rota de recurso (`guardian` ↔ `child`); previne IDOR.
 - Bot opera no mesmo processo da API e valida vínculo por `telegram_user_id` (+ `secret_token` no modo webhook).
@@ -1387,7 +1389,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 | RF Telas/Design | §7, §8 |
 | RNF Performance/Infra | §0.3, §11 |
 | LGPD/Segurança | §10 |
-| Contas/admin | §2.3 (`status`), §3.11 (approve/reject), §10.5 (RF-16) |
+| Contas/admin | §2.3 (`status`), §3.11 (approve/reject), §10.5 (RF-24) |
 | Qualidade/Testes/Obs | §9 |
 
 ---
@@ -1409,7 +1411,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 - **RF-13** Reprocessar extração de uma tarefa sob demanda.
 - **RF-14** Aplicar retenção/expurgo de imagens e consentimento LGPD.
 - **RF-15** Proteger rotas por dono e aplicar rate limiting.
-- **RF-16** Exigir aprovação do admin antes de liberar conta nova (`pending` → `approved`/`rejected`; login, vínculo Telegram e bot bloqueados até aprovação).
+- **RF-24** Exigir aprovação do admin antes de liberar conta nova (`pending` → `approved`/`rejected`; login, vínculo Telegram e bot bloqueados até aprovação).
 
 ---
 
@@ -1417,9 +1419,9 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 
 > ⚠️ **ABERTO:** itens a decidir com o responsável antes da implementação.
 
-1. **Manuscrito infantil:** Nex-N2.5-Mini pago lê bem manuscrito em foto (derivada 1024px JPEG)? Validar com 10 fixtures; se não, aceitar só impresso no MVP.
-2. **Precisão mínima aceitável** de matéria/data nas fixtures (ex.: ≥85% matéria, ≥75% data) no tier pago?
-3. **~~VLM escolhido~~ RESOLVIDO (v1.1–v1.2):** OpenRouter `nex-agi/nex-n2.5-mini` como primário; desde o beta no tier **pago** (`AI_WORKER_CONCURRENCY=3`).
+1. **Manuscrito infantil:** Nex-N2.5-Mini `:free` lê bem manuscrito em foto (derivada 1024px JPEG)? Validar com 10 fixtures; se não, aceitar só impresso no MVP.
+2. **Precisão mínima aceitável** de matéria/data nas fixtures (ex.: ≥85% matéria, ≥75% data) no tier `:free`?
+3. **~~VLM escolhido~~ RESOLVIDO (v1.1–v1.2, confirmado v1.4):** OpenRouter `nex-agi/nex-n2.5-mini` como primário; desde 2026-09-24 no tier **`:free`** (pago delistado, 404 No endpoints; `AI_WORKER_CONCURRENCY=3`).
 4. **MinIO vs volume simples:** decidir após medir RAM total (agora com folga, MinIO mantido por padrão).
 5. **~~Autenticação inicial~~ RESOLVIDO (v1.2):** e-mail/senha (JWT + refresh, Argon2id) desde o início + vínculo Telegram por código; admin com RBAC.
 6. **Resumo diário** entra no MVP? (marcado opcional)
@@ -1427,7 +1429,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 8. **Política exata de retenção** (90 dias é chute) + termo LGPD informando uso de API externa (OpenRouter/EUA) — validar com responsável jurídico.
 9. **Stitch:** confirmar `customColor`/variante após primeira geração; avaliar trocar `colorVariant` para `FIDELITY`.
 10. **~~Provedor de hospedagem~~ RESOLVIDO (v1.2):** VPS própria (`/opt/hora_da_tarefa`, deploy via rsync + compose — ver `docs/GO-LIVE.md`); domínio/TLS pós-DNS para o webhook; segredos só no `.env` da VPS.
-11. **~~Limites OpenRouter~~ RESOLVIDO (v1.2):** tier pago no beta; teto mensal por conta + `GET /v1/usage` + alerta de 429; `:free` só contingência.
+11. **~~Limites OpenRouter~~ RESOLVIDO (v1.2, atualizado v1.4):** tier `:free` no beta (pago delistado 2026-09-24); teto mensal por conta + `GET /v1/usage` + alerta de 429; sem retry em 404 de modelo.
 
 ---
 
@@ -1447,3 +1449,5 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 > v1.2 (2026-09-23): beta na VPS — modelo pago, bot em polling (`RUN_MODE`), FSM real documentada, MinIO no compose, beat APScheduler, linhas do bot com nome da criança, auditoria A1–A7 corrigida. OQ-3/5/10/11 resolvidos; métricas Prometheus e backup diário seguem como alvo pré-GA.
 >
 > v1.3 (2026-09-23): RF-16 — conta nova nasce `pending` e só usa a plataforma após aprovação do admin (login/vínculo/bot bloqueados; migração `0012` com backfill).
+>
+> v1.4 (2026-09-25): modelo `:free` como padrão (pago delistado 2026-09-24, 404 sem retry); aprovação renumerada **RF-16 → RF-24** (RF-16 volta a ser calendário semanal no PRD); beat com `_select_sender` (live direto / polling outbox), import de rotina com teto 20k + threadpool, bot com id curto + `concluir` escopado ao dono, listagem com paginação SQL, compose respeita `.env`, frontend mobile responsivo; testes 154 (27 arquivos), migrations 0001–0012.

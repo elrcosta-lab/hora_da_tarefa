@@ -1,4 +1,6 @@
-# Auditoria de Segurança — Hora da Tarefa (VPS, 3ª rodada)
+# Auditoria de Segurança — Hora da Tarefa (VPS, 3ª rodada + adendo v1.4)
+
+- Adendo 2026-09-25 (v1.4, sem nova rodada): achados A1–A4 e O1 da 3ª rodada já estão **corrigidos e verificados em produção** (tabela "Status pós-correção" acima: teto+threadpool no import, `concluir` escopado ao dono, `S3_ACCESS_KEY` rotacionada, paginação SQL, compose respeita `.env`). Nenhum achado novo; este arquivo segue como registro point-in-time da 3ª rodada. Aprovação de contas renumerada RF-16 → **RF-24** nos docs (RF-16 volta a ser calendário semanal no PRD); modelo padrão confirmado `:free` (pago delistado 2026-09-24).
 
 - Data: 2026-09-24
 - Stack detectada: Next.js 14 (App Router) + FastAPI + SQLAlchemy 2 + Postgres 16 + Redis 7 + MinIO (S3) + JWT HS256 + Argon2id + bot Telegram próprio sobre httpx (polling) + OpenRouter (`nex-agi/nex-n2.5-mini:free`)
@@ -123,7 +125,7 @@
 ## Pontos verificados sem achados
 
 - **V1 (RLS):** não aplicável — sem BaaS com chave anônima; isolamento equivalente por dono verificado em 100% das rotas de recurso (`list_homeworks`/`export_csv`/`usage_summary`/`today_overview` filtram `owner_user_id`; `owns`/`owned_by` em todos os `:id` de children, homeworks, agenda, image, reprocess, status, edit, accept, suggestions, notifications, settings).
-- **V2:** sem decisão de permissão no frontend (sem tela admin, sem `isAdmin`/`role`); `require_admin` com 403 em todas as rotas `/v1/admin/*`; RF-16 com gates no servidor (login 403, link 403, vínculo e bot com `PENDING_MSG`).
+- **V2:** sem decisão de permissão no frontend (sem tela admin, sem `isAdmin`/`role`); `require_admin` com 403 em todas as rotas `/v1/admin/*`; aprovação (RF-24; então RF-16) com gates no servidor (login 403, link 403, vínculo e bot com `PENDING_MSG`).
 - **V3 (rotas HTTP):** todos os `:id` checam existência (404) + posse (403) antes de ler/gravar; `accept` só aceita slot das sugestões atuais; `delete_activity` confere `child_id`; autoexclusão e último-admin bloqueados.
 - **V4:** `.env` nunca rastreado no git; histórico sem chave real (só placeholders `...`/`CHANGE_ME`/dummy); `NEXT_PUBLIC_*` só com URL e handle público do bot; `.env` da VPS com permissão 600; `JWT_SECRET`/`POSTGRES_PASSWORD`/`ADMIN_PASSWORD`/`S3_SECRET_KEY` rotacionados (prefixos conferidos).
 - **V5 (demais):** magic bytes (não confia em content-type), 10 MB web+bot+import, rewrite via Pillow, teto anti-bomba 25 MP, chaves UUID + `_check_key` anti-traversal, hint 500 chars, Pydantic + allowlists (`PATCH`, settings, activities), `int()`/`weekday`/`HH:MM` sob `Validation` (400), sem SQL cru (ORM), sem sinks XSS, sem `innerHTML`.
