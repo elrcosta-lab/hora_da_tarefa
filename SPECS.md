@@ -1,8 +1,8 @@
 # SPECS — Hora da Tarefa (SDD)
 
 > Documento de Especificação Técnica (Spec-Driven Development).
-> Autor: subagente SPEC + OpenCode · Versão: 1.4 (modelo :free padrão + RF-24) · Status: **Aprovada para o beta**
-> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`nex-agi/nex-n2.5-mini:free`; tier pago delistado em 2026-09-24) + bot em polling.
+> Autor: subagente SPEC + OpenCode · Versão: 1.5 (modelo muse-spark + polling agenda extração) · Status: **Aprovada para o beta**
+> Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`meta/muse-spark-1.3-contributor`; nex delistado em 24-25/09/2026) + bot em polling.
 > Última atualização: 2026-09-25.
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
 
@@ -51,7 +51,7 @@
 | Storage | **MinIO (S3-compatible) em volume Docker** | diretório em volume + abstração S3 | Mesma API S3 permite migrar para provedor externo sem trocar código. |
 | Bot Telegram | **Handlers próprios em Python sobre `httpx` (sem aiogram)** | grammY/Telegraf (Node) | Mesmo processo da API; polling (`RUN_MODE`) ou webhook + idempotência por `update_id` |
 | OCR | **Nenhum no caminho crítico** (Nex-N2.5-Mini lê imagem direto) | Tesseract 5 como enriquecimento futuro opcional | Removido para simplificar; reavaliar pós-MVP se manuscrito exigir |
-| VLM (extração) | **OpenRouter `nex-agi/nex-n2.5-mini:free` via `openai` SDK (`base_url=https://openrouter.ai/api/v1`)** | `nex-agi/nex-n2.5-pro:free` como escalonamento futuro | MoE multimodal 35B/3B ativos, 262k contexto, structured output, $0 no free (pago delistado: 404 No endpoints desde 2026-09-24); `:free` satura em pico — backoff + aviso `extracao_falhou` |
+| VLM (extração) | **OpenRouter `meta/muse-spark-1.3-contributor` via `openai` SDK (`base_url=https://openrouter.ai/api/v1`)** | outro multimodal validado na foto real | Multimodal, 1M contexto, structured output, microcusto (~$0,000002/extração; requer 18+ e ajuste de privacidade na conta); `:free` satura em pico — backoff + aviso `extracao_falhou` |
 | LLM fallback texto | **O mesmo Nex-N2.5-Mini (só-texto, sem imagem)** | — | Sem Llama/Qwen local; retry usa o mesmo modelo com `temperature=0.1` |
 | Runtime IA | **HTTP client + Pillow (resize/strip EXIF)** | — | Sem Ollama/llama.cpp; worker leve |
 | Reverse proxy/TLS | **Caddy** (TLS automático) | Nginx + certbot | Menos config na VPS. |
@@ -131,13 +131,13 @@ flowchart LR
 | `scheduler` (beat) | `APScheduler` no lifespan da API: tick 1/min (`run_beat_tick` = `mark_overdue` + `dispatch_due`; entrega direta via Bot API quando `TELEGRAM_LIVE_SEND`, via outbox do polling quando `TELEGRAM_POLLING`, senão só marca — `_select_sender` em `app/tasks/beat.py`) + purge de imagens 1x/dia; `BEAT_ENABLED=false` desliga | - |
 | `bot` (httpx, sem aiogram) | Recebe update via webhook ou polling (`RUN_MODE`, `app/bot/polling.py`), valida vínculo do usuário, opera via camada `tasks` | Não expõe dados sem vínculo (§6.1 gate) |
 | `minio` | Guarda imagens originais e derivadas | - |
-| `openrouter` (externo) | Inferência multimodal imagem→JSON (`nex-agi/nex-n2.5-mini:free`) | Não guarda estado; 429 com backoff; 404 No-endpoints não retenta no beat |
+| `openrouter` (externo) | Inferência multimodal imagem→JSON (`meta/muse-spark-1.3-contributor`) | Não guarda estado; 429 com backoff; 404 No-endpoints não retenta no beat |
 
 ### 1.3 Fluxo principal (happy path)
 
 1. Pai envia foto no Telegram → bot baixa arquivo via `getFile` e registra `homework` (status `pendente`) com `child_id` (contexto ou única criança).
 2. API anonimiza (resize ≤1600px, strip EXIF, SHA-256), salva imagem em `homework_image`, responde 202 e roda a extração em background (dedupe por `sha256`: hash repetido reaproveita `extraction_json` sem chamar API).
-3. Extração chama OpenRouter `nex-agi/nex-n2.5-mini:free` (derivada 1024px + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança, `extraction_status`) → motor de agendamento grava `suggestion_slot`. Falha → `falhou` + aviso `extracao_falhou` (revisão manual, sem retry em 404 de modelo).
+3. Extração chama OpenRouter (derivada 1024px + prompt) → JSON validado → atualiza `homework` (matéria, enunciado, due_at, confiança, `extraction_status`) → motor de agendamento grava `suggestion_slot`. Falha → `falhou` + aviso `extracao_falhou` (revisão manual, sem retry em 404 de modelo).
 4. Bot envia mensagem com sugestão e botões (`Agendar` / `Outra` / `Não é tarefa`).
 5. Beat agenda lembretes 24h/2h em `notification_log` (status `scheduled`) e dispara quando vence.
 
@@ -936,9 +936,9 @@ resp = client.chat.completions.create(
 ### 5.6 Config IA (`.env` — ver `.env.example`)
 
 ```
-# OpenRouter (primário; pago nex-agi/nex-n2.5-mini DELISTADO em 2026-09-24 — 404 No endpoints)
+# OpenRouter (primário; família nex DELISTADA em 24-25/09/2026 — 404 No endpoints)
 OPENROUTER_API_KEY=sk-or-v1-...
-OPENROUTER_MODEL=nex-agi/nex-n2.5-mini:free
+OPENROUTER_MODEL=meta/muse-spark-1.3-contributor
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
 OPENROUTER_SITE_URL=https://horadatarefa.app
 OPENROUTER_APP_NAME=Hora da Tarefa
@@ -1278,7 +1278,7 @@ Funcionalidade: Upload de foto da tarefa
 | E2E | Playwright (headless) | upload→sugestão→aceitar→notificação (Telegram mock + OpenRouter mock) | agendado |
 | Carga | Locust/K6 | 50 usuários, p95 < 800ms em `/homeworks` | janela de manutenção |
 
-**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data. Teste live usa `OPENROUTER_MODEL=nex-agi/nex-n2.5-mini:free` com cache (429 do free é esperado; 404 = modelo morto, trocar).
+**Fixtures de imagem:** 10 exemplos rotulados (nítidos, tortos, manuscritos, baixa luz, não-tarefa). Guardar em `tests/fixtures/`; medir precision/recall de matéria e data. Teste live usa o `OPENROUTER_MODEL` vigente com cache (429 do free é esperado; 404 = modelo morto, trocar).
 
 - **Regras de CI:** unit+contrato em todo PR (com mock); integração IA live manual/noturna. Sem worker de IA pesado (extração é HTTP + Pillow, sem modelo residente).
 
