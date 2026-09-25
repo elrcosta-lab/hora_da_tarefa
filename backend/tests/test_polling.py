@@ -85,3 +85,59 @@ def test_polling_retries_on_webhook_conflict(monkeypatch):
     assert stats["errors"] == 2
     assert stats["updates"] == 1
     assert waits == [60, 60]
+
+
+def test_polling_schedules_extraction_for_photo(monkeypatch):
+    """Bug real (2026-09-25): foto via polling criava a tarefa mas nunca
+    agendava a extração (só a rota webhook fazia isso) — tarefa presa
+    em `processando` até o beat (6+ min) ou para sempre.
+
+    Sem patch global de threading: a thread real executa o mock e o teste
+    espera com deadline (nada vaza para outros testes).
+    """
+    import base64
+    import threading
+    import time
+
+    import app.bot.polling as P
+    from app.bot import handlers as H
+    from app.tasks import admin as A
+    from app.tasks import routine as R
+    from app.tasks import users as U
+    from app.tasks.extract import clear_store, get_homework
+
+    # Fixa os bindings de import ANTES do mock: o caminho de foto importa
+    # app.api.homeworks sob demanda, e o `from` de topo fotografaria o mock
+    # no namespace (vazamento entre testes no mesmo processo).
+    import app.api.homeworks  # noqa: F401
+
+    R.clear_routine()
+    U.clear_users()
+    clear_store()
+    try:
+        u = U.create_user("Mae")
+        A.approve_user(u["user_id"])
+        U.link_telegram(u["link_code"], 607)
+        R.create_child("Bia", owner_user_id=u["user_id"])
+        batch = [{"update_id": 502,
+                  "message": {"message_id": 2, "from": {"id": 607}, "chat": {"id": 607},
+                              "photo": [{"file_id": "x"}],
+                              "test_bytes_b64": base64.b64encode(b"fake-bytes-foto").decode()}}]
+        monkeypatch.setattr("app.bot.telegram_api.get_updates",
+                            lambda token, offset=None, timeout=20: batch)
+        calls = []
+        monkeypatch.setattr("app.tasks.extract.run_extraction",
+                            lambda hid: calls.append(hid))
+        stop = threading.Event()
+        stats = P.run_polling(stop, "test-token", max_iterations=1)
+        assert stats["updates"] == 1
+        deadline = time.monotonic() + 10
+        while not calls and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert len(calls) == 1
+        assert get_homework(calls[0]) is not None
+        assert H.sent_count(607) >= 1  # "Recebi! Analisando..." foi respondido
+    finally:
+        R.clear_routine()
+        U.clear_users()
+        clear_store()

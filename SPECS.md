@@ -974,6 +974,7 @@ rechama a API. `GET /v1/usage` soma tokens e estima US$ por conta
 - **Idempotência:** dedupe por `update_id` (memória/Redis SET NX, TTL 24 h); reenvio do Telegram não duplica ação.
 - **Gate de acesso (obrigatório):** somente `telegram_user_id` vinculados acessam o bot. Pareamento via `POST /v1/auth/telegram/link` (gera código de 6 dígitos single-use) consumido no chat como código puro ou `/start <código>`. Sem vínculo: qualquer comando/foto/callback recebe mensagem de acesso restrito e **nada é criado nem listado** (sem vazamento de dados entre responsáveis). Tabela `app_user` (migração `0003`).
 - **Bot API real (sem aiogram):** `app/bot/telegram_api.py` (httpx) — fotos baixadas via `getFile` (falha → msg de erro, nada criado; jamais sintetiza bytes); `test_bytes_b64` só com `ALLOW_TEST_BYTES=true`. Respostas saem do outbox via `sendMessage` em background quando `TELEGRAM_LIVE_SEND=true`. `dispatch_due(sender=)` entrega lembretes 24h/2h/atraso ao `created_by_user_id` vinculado (templates §6.3), uma única vez por `idempotency_key`.
+- **Extração no polling:** como não há `BackgroundTasks` fora de rota, o loop dispara `run_extraction` em thread daemon ao receber foto (bug 2026-09-25: sem isso a tarefa ficava em `processando` até o beat); dedupe respeitado (`_run_extraction_async` em `app/bot/polling.py`).
 
 ### 6.2 Comandos e handlers
 
