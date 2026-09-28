@@ -181,10 +181,10 @@ Responda APENAS JSON válido, sem markdown.
 - Exceções de dia ("hoje estou de folga", "dia 25 livre"): date em YYYY-MM-DD, vale só naquele dia.
   "Dia todo livre/de folga" sem horas → start_time 00:00, end_time 23:59.
 - Nunca invente horários; o que for ilegível vai para warnings e a entrada é descartada.
-- "is_blocking" das atividades: true para compromissos em horário fixo (esporte,
-  terapia, curso, natação, futsal — a criança está ocupada e o motor deve evitar
-  sugerir tarefa nesse horário); false SOMENTE para atividade flexível que pode
-  ceder lugar ao estudo. Na dúvida, true.
+- "is_blocking" das atividades: true quando a criança está indisponível no horário
+  (esporte, terapia, curso fixo), false quando a atividade é flexível e pode ceder
+  lugar ao estudo. Na dúvida, true + avise em warnings ("Natação marcada como
+  bloqueante — desmarque na UI se for flexível"); o responsável ajusta na tela.
 - Omita chaves com valor null para economizar tokens.
 Esquema: {"schedules": [{"weekday": int, "start_time": "HH:MM", "end_time": "HH:MM", "subject": str, "kind": "aula"}],
 "activities": [{"title": str, "weekday": int|null, "start_time": "HH:MM", "end_time": "HH:MM", "recurrence": "weekly", "travel_before_min": int, "travel_after_min": int, "is_blocking": bool}],

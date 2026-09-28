@@ -163,8 +163,13 @@ def _in_parent_window(slot_start, slot_end, availability, kind: str | None = Non
     return False
 
 
+def _soft_hits(slot_start, slot_end, soft) -> list:
+    """Títulos das atividades flexíveis que colidem com o slot (não bloqueiam)."""
+    return [t for bs, be, t in (soft or []) if _overlaps(slot_start, slot_end, bs, be)]
+
+
 def _score(slot_start, slot_end, duration, homework, now, due, busy, availability=None,
-           shift: str | None = None) -> float:
+           shift: str | None = None, soft_hit: bool = False) -> float:
     total_sec = max(1.0, (due - now).total_seconds())
     remain_sec = max(0.0, (due - slot_start).total_seconds())
     s = 30.0 * max(0.0, min(1.0, remain_sec / total_sec))
@@ -185,6 +190,8 @@ def _score(slot_start, slot_end, duration, homework, now, due, busy, availabilit
         s += 12.0  # responsável disponível para acompanhar
     if _in_parent_window(slot_start, slot_end, availability, kind="busy"):
         s -= 25.0  # responsável trabalhando: evita, mas não inviabiliza
+    if soft_hit:
+        s -= 20.0  # atividade flexível (ex. Natação não-bloqueante): evita, mas não inviabiliza
     if slot_start.date() == now.date() and duration > 45:
         s -= 15.0
     return max(0.0, min(100.0, s))
@@ -214,8 +221,9 @@ def suggest_slots(homework, schedules=None, activities=None, preferences=None, n
     q_start, q_end = _quiet()
     shift = prefs.get("shift") or detect_shift(schedules)
 
-    # 1. busy no horizonte (máx 14 dias)
+    # 1. busy no horizonte (máx 14 dias); flexíveis vão p/ soft (penalidade, sem bloquear)
     busy = []
+    soft = []
     day = now.date()
     last = min(due_limite.date(), (now + timedelta(days=14)).date())
     d = day
@@ -225,20 +233,21 @@ def suggest_slots(homework, schedules=None, activities=None, preferences=None, n
             if int(sc.get("weekday", -1)) == wd:
                 busy.append(_to_interval(d, sc["start_time"], sc["end_time"], tz))
         for ac in activities:
-            if not ac.get("is_blocking", True):
-                continue
             if not _matches_entry(ac, d) or not _parity_ok(ac, d):
                 continue
             awd = ac.get("weekday")
             if awd is not None and int(awd) != wd:
                 continue
-            busy.append(
-                _to_interval(
-                    d, ac["start_time"], ac["end_time"], tz,
-                    delta_before=int(ac.get("travel_before_min", 0)),
-                    delta_after=int(ac.get("travel_after_min", 0)),
-                )
+            iv = _to_interval(
+                d, ac["start_time"], ac["end_time"], tz,
+                delta_before=int(ac.get("travel_before_min", 0)),
+                delta_after=int(ac.get("travel_after_min", 0)),
             )
+            if not ac.get("is_blocking", True):
+                title = (ac.get("title") or "atividade").strip() or "atividade"
+                soft.append((iv[0], iv[1], title))
+                continue
+            busy.append(iv)
         d += timedelta(days=1)
     busy = _merge(busy)
 
@@ -268,9 +277,13 @@ def suggest_slots(homework, schedules=None, activities=None, preferences=None, n
         while cur + timedelta(minutes=duration) <= win_end:
             s, e = cur, cur + timedelta(minutes=duration)
             if not any(_overlaps(s, e, bs, be) for bs, be in busy):
-                score = _score(s, e, duration, homework, now, due, busy, availability, shift)
+                hits = _soft_hits(s, e, soft)
+                score = _score(s, e, duration, homework, now, due, busy, availability, shift,
+                               soft_hit=bool(hits))
                 days_left = (due.date() - s.date()).days
                 reason = f"Livre; entrega em {days_left}d; foco {'alto' if 14 <= s.hour < 18 else 'normal'}"
+                if hits:
+                    reason += f"; coincide com {hits[0]} (flexível)"
                 if _in_parent_window(s, e, availability, kind="available"):
                     reason += "; responsável disponível"
                 if _in_parent_window(s, e, availability, kind="busy"):

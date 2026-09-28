@@ -114,3 +114,40 @@ def test_single_day_horizon_still_fills_limit():
     inp["activities"] = []
     slots = suggest_slots(**inp, limit=3)
     assert len(slots) == 3
+
+
+def _overlaps(a_start, a_end, b_start, b_end) -> bool:
+    return a_start < b_end and b_start < a_end
+
+
+def test_flexible_activity_penalized_not_invisible():
+    """Atividade flexível (Natação is_blocking=False): não bloqueia, mas o rank 1
+    a evita quando há alternativa — e quem colide pontua menos, com motivo."""
+    from datetime import time
+    from app.services.scheduling import suggest_slots
+
+    hw = {"due_at": _dt(24, 23, 59), "estimated_minutes": 30, "priority": 1, "subject": "Português"}
+    acts = [{"title": "Natação", "weekday": 0, "start_time": "18:15", "end_time": "19:00",
+             "travel_before_min": 20, "travel_after_min": 0, "is_blocking": False}]
+    slots = suggest_slots(hw, schedules=[], activities=acts, now=_dt(21, 10, 0), limit=5)
+    assert len(slots) > 0
+    swim = (_dt(21, 17, 55), _dt(21, 19, 0))
+    first = slots[0]
+    assert not _overlaps(first["start_at"], first["end_at"], *swim)
+    for s in slots:
+        if _overlaps(s["start_at"], s["end_at"], *swim):
+            assert s["score"] < first["score"]
+            assert "flexível" in s["reason"]
+
+
+def test_flexible_activity_still_suggested_when_only_option():
+    """Sem alternativa livre, o slot que coincide com a flexível ainda é oferecido."""
+    from app.services.scheduling import suggest_slots
+
+    hw = {"due_at": _dt(21, 21, 59), "estimated_minutes": 30, "priority": 1, "subject": "Português"}
+    sched = [{"weekday": 0, "start_time": "07:00", "end_time": "17:50", "kind": "aula"}]
+    acts = [{"title": "Natação", "weekday": 0, "start_time": "18:15", "end_time": "19:00",
+             "travel_before_min": 20, "travel_after_min": 0, "is_blocking": False}]
+    slots = suggest_slots(hw, schedules=sched, activities=acts, now=_dt(21, 10, 0), limit=3)
+    assert len(slots) > 0  # flexível nunca zera a oferta
+    assert any("flexível" in s["reason"] for s in slots)

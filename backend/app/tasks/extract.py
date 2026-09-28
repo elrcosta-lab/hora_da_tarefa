@@ -764,7 +764,8 @@ def get_suggestions(homework_id: str, limit: int = 5, now=None, schedules=None, 
                 ]
             if activities is None:
                 activities = [
-                    {"weekday": a["weekday"], "start_time": a["start_time"], "end_time": a["end_time"],
+                    {"title": a.get("title") or "atividade",
+                     "weekday": a["weekday"], "start_time": a["start_time"], "end_time": a["end_time"],
                      "travel_before_min": a.get("travel_before_min", 0),
                      "travel_after_min": a.get("travel_after_min", 0),
                      "is_blocking": a.get("is_blocking", True)}
