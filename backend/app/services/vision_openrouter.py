@@ -65,6 +65,9 @@ Regras:
   com TODAS as tarefas de casa, nunca apenas a primeira. Cada item de "tarefas" é
   uma matéria distinta: {"disciplina": "...", "assunto": "...", "tarefa": "..."}.
   Transcreva cada "para casa" fielmente; não resuma N tarefas em 1.
+- PRAZO DA AGENDA: a data do cabeçalho ("data") é o dia da aula, NÃO o prazo de
+  entrega. Preencha "entrega" em cada tarefa SOMENTE se a professora escreveu um
+  prazo explícito ("entregar quarta", "para 30/09"); sem prazo explícito, omita.
 - Omita chaves com valor null para economizar tokens.
 
 Esquema tarefa única:
@@ -85,7 +88,7 @@ Esquema agenda multi-tarefa (2+ "para casa" na mesma foto):
   "data": "DD/MM/YYYY",
   "turma": "string|null",
   "tarefas": [
-    {"disciplina": "Português", "assunto": "Estudo de texto", "tarefa": "Para casa: questões 50, 52 e 53 (página 24)"},
+    {"disciplina": "Português", "assunto": "Estudo de texto", "tarefa": "Para casa: questões 50, 52 e 53 (página 24)", "entrega": "DD/MM/YYYY|null"},
     {"disciplina": "Matemática", "assunto": "Numeral decimal", "tarefa": "Para casa: questões 36 a 38 (página 115)"}
   ],
   "confidence": number,
@@ -386,26 +389,50 @@ def extract_routine(text: str | None = None, image_bytes: bytes | None = None,
         raise ExtractionFailed(f"VALIDATION_ERROR: {exc}") from exc
 
 
+def _parse_agenda_due(raw) -> str | None:
+    """Prazo explícito da professora por tarefa → YYYY-MM-DD. None se ausente.
+
+    Aceita DD/MM/YYYY, DD/MM (ano corrente SP) e YYYY-MM-DD. A data do
+    cabeçalho da agenda ("data") NUNCA é prazo: é o dia da aula em que o
+    "para casa" foi passado (bug 2026-09-28: usá-la como due colapsava o
+    horizonte para hoje à noite).
+    """
+    import re
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    if not raw:
+        return None
+    s = str(raw).strip()
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", s)
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    m = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", s)
+    if m:
+        return f"{m.group(3)}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    m = re.search(r"(\d{1,2})/(\d{1,2})(?!\d)", s)
+    if m:
+        year = datetime.now(ZoneInfo("America/Sao_Paulo")).year
+        return f"{year}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
+    return None
+
+
 def _normalize_agenda_shapes(data: dict) -> list[dict] | None:
     """Agenda do dia (várias matérias) → N tarefas no nosso schema.
 
     Observado ao vivo (28/09/2026): foto com Português + Matemática retornava
     só a 1ª tarefa (perda de dados). Agora mapeia TODAS as tarefas de casa,
     uma por matéria, cada uma com needs_review=True.
+    Prazo: só o explícito da professora ("entrega"); sem ele, due_at=None e
+    o run_extraction infere pela grade (próxima aula) ou deixa p/ revisão.
     Retorna None se o formato não for agenda.
     """
-    import re
-
     tarefas = data.get("tarefas")
     if not isinstance(tarefas, list) or not tarefas:
         return None
     valid = [t for t in tarefas if isinstance(t, dict)]
     if not valid:
         return None
-    due = None
-    m = re.search(r"(\d{2})/(\d{2})/(\d{4})", str(data.get("data") or ""))
-    if m:
-        due = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
     try:
         conf = float(data.get("confidence", 0.6))
     except (TypeError, ValueError):
@@ -419,6 +446,8 @@ def _normalize_agenda_shapes(data: dict) -> list[dict] | None:
         statement = " — ".join(p for p in (task, topic) if p) or None
         title = (topic or task).strip()
         title = " ".join(title.split()[:8]) or "Tarefa da agenda"
+        due = _parse_agenda_due(item.get("entrega") or item.get("due_at")
+                                or item.get("due") or item.get("prazo"))
         out.append({"is_homework": True, "subject": subject, "title": title or "Tarefa da agenda",
                     "statement": statement, "due_at": due, "estimated_minutes": None,
                     "priority": 1, "confidence": conf, "needs_review": True,

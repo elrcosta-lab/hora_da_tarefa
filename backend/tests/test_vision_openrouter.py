@@ -172,10 +172,37 @@ def test_agenda_shape_normalizes_first_task():
     result = extract_homework(_make_test_image(800, 600), client=mock_client)
     assert result.is_homework is True
     assert result.subject == "Ciências"
-    assert result.due_at == "2026-09-21"
+    # a data do cabeçalho é o dia da aula, não o prazo (bug 2026-09-28)
+    assert result.due_at is None
     assert "45 e 46" in (result.statement or "")
     assert result.needs_review is True
     assert result.extraction_status == "baixa_confianca"
+
+
+def test_agenda_explicit_deadline_is_kept():
+    """Prazo explícito da professora ('entrega') vira due_at; o resto fica None."""
+    import json
+    from unittest.mock import MagicMock
+
+    from app.services.vision_openrouter import extract_homeworks
+
+    agenda = {"data": "28/09/2026 - Segunda-Feira",
+              "tarefas": [
+                  {"disciplina": "Português", "assunto": "Texto",
+                   "tarefa": "Para casa q 50", "entrega": "30/09/2026"},
+                  {"disciplina": "Matemática", "assunto": "Decimal",
+                   "tarefa": "Para casa q 36"},
+              ],
+              "confidence": 0.9}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=json.dumps(agenda)))],
+        usage=MagicMock(prompt_tokens=400, completion_tokens=300),
+    )
+    results = extract_homeworks(_make_test_image(800, 600), client=mock_client)
+    by_subject = {r.subject: r for r in results}
+    assert by_subject["Português"].due_at == "2026-09-30"
+    assert by_subject["Matemática"].due_at is None
 
 
 def test_agenda_multi_task_returns_all_subjects():
@@ -206,7 +233,7 @@ def test_agenda_multi_task_returns_all_subjects():
     for r in results:
         assert r.is_homework is True
         assert r.needs_review is True
-        assert r.due_at == "2026-09-28"
+        assert r.due_at is None  # sem "entrega" explícita: grade/revisão decidem
 
 
 def test_empty_content_retries_once_then_succeeds():

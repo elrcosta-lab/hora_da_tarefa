@@ -221,7 +221,7 @@ CREATE TYPE notification_status AS ENUM ('scheduled','sent','failed','cancelled'
 |---|---|---|---|
 | id | uuid | PK | |
 | child_id | uuid | FK child(id) ON DELETE CASCADE | |
-| weekday | smallint | 0–6 (0=domingo), NOT NULL | |
+| weekday | smallint | 0–6 (0=segunda, convenção Python — igual ao motor §4), NOT NULL | |
 | start_time | time | NOT NULL | hora local |
 | end_time | time | NOT NULL | |
 | subject | text | NOT NULL | matéria |
@@ -853,6 +853,8 @@ Regras:
 - Se a imagem não for uma tarefa escolar, retorne {"is_homework": false, "confidence": 0.9, "needs_review": true}.
 - MULTI-TAREFA (obrigatório): se a imagem contiver várias matérias com "para casa",
   retorne o formato agenda com TODAS as tarefas (ver §5.4b), nunca apenas a primeira.
+- PRAZO DA AGENDA: a data do cabeçalho ("data") é o dia da aula, NÃO o prazo.
+  "entrega" por tarefa só com prazo explícito da professora; sem ele, omita.
 
 Esquema tarefa única:
 {
@@ -872,7 +874,7 @@ Esquema agenda multi-tarefa:
   "data": "DD/MM/YYYY",
   "turma": "string|null",
   "tarefas": [
-    {"disciplina": "Português", "assunto": "...", "tarefa": "Para casa: ..."},
+    {"disciplina": "Português", "assunto": "...", "tarefa": "Para casa: ...", "entrega": "DD/MM/YYYY|null"},
     {"disciplina": "Matemática", "assunto": "...", "tarefa": "Para casa: ..."}
   ],
   "confidence": number,
@@ -932,6 +934,9 @@ página) gera **N Homeworks** (1 por matéria), não só o primeiro. Protocolo:
 - `extract_homeworks()` normaliza cada item p/ o schema single
   (`_normalize_agenda_shapes`); `extract_homework()` (seam estável mockado nos
   testes) retorna a primeira com as irmãs em `meta['siblings']`.
+- Prazo da agenda (2026-09-28): a data do cabeçalho é o dia da aula, nunca o
+  `due_at` ("para casa" vence na próxima aula). Só `entrega` explícita por tarefa
+  vira `due_at`; sem ela, `due_at=None` e vale a precedência §5.5b (grade → +7d).
 - `run_extraction()` atualiza a primária e cria as irmãs (mesmo `child_id`/dono,
   mesma imagem com novo `storage_key`, `meta.sibling_of` + `meta.sibling_ids` na
   primária p/ auditoria), agendando `sugestao_inicial`/lembretes p/ cada uma.

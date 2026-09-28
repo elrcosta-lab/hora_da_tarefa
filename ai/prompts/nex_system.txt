@@ -20,6 +20,9 @@ Regras:
   com TODAS as tarefas de casa, nunca apenas a primeira. Cada item de "tarefas" é
   uma matéria distinta: {"disciplina": "...", "assunto": "...", "tarefa": "..."}.
   Transcreva cada "para casa" fielmente; não resuma N tarefas em 1.
+- PRAZO DA AGENDA: a data do cabeçalho ("data") é o dia da aula, NÃO o prazo de
+  entrega. Preencha "entrega" em cada tarefa SOMENTE se a professora escreveu um
+  prazo explícito ("entregar quarta", "para 30/09"); sem prazo explícito, omita.
 - Omita chaves com valor null para economizar tokens.
 
 Esquema tarefa única:
@@ -40,7 +43,7 @@ Esquema agenda multi-tarefa (2+ "para casa" na mesma foto):
   "data": "DD/MM/YYYY",
   "turma": "string|null",
   "tarefas": [
-    {"disciplina": "Português", "assunto": "Estudo de texto", "tarefa": "Para casa: questões 50, 52 e 53 (página 24)"},
+    {"disciplina": "Português", "assunto": "Estudo de texto", "tarefa": "Para casa: questões 50, 52 e 53 (página 24)", "entrega": "DD/MM/YYYY|null"},
     {"disciplina": "Matemática", "assunto": "Numeral decimal", "tarefa": "Para casa: questões 36 a 38 (página 115)"}
   ],
   "confidence": number,
