@@ -60,9 +60,14 @@ Regras:
 - "confidence": 0.0 a 1.0, sua certeza geral.
 - "needs_review": true se qualquer campo crítico incerto.
 - Se a imagem não for uma tarefa escolar, retorne {"is_homework": false, "confidence": 0.9, "needs_review": true}.
+- MULTI-TAREFA (obrigatório): se a imagem contiver várias matérias com "para casa"
+  (ex.: agenda do dia, bilhete com Português + Matemática), retorne o formato agenda
+  com TODAS as tarefas de casa, nunca apenas a primeira. Cada item de "tarefas" é
+  uma matéria distinta: {"disciplina": "...", "assunto": "...", "tarefa": "..."}.
+  Transcreva cada "para casa" fielmente; não resuma N tarefas em 1.
 - Omita chaves com valor null para economizar tokens.
 
-Esquema:
+Esquema tarefa única:
 {
   "is_homework": true,
   "subject": "string",
@@ -71,6 +76,18 @@ Esquema:
   "due_at": "YYYY-MM-DD|null",
   "estimated_minutes": integer|null,
   "priority": 0|1|2,
+  "confidence": number,
+  "needs_review": boolean
+}
+
+Esquema agenda multi-tarefa (2+ "para casa" na mesma foto):
+{
+  "data": "DD/MM/YYYY",
+  "turma": "string|null",
+  "tarefas": [
+    {"disciplina": "Português", "assunto": "Estudo de texto", "tarefa": "Para casa: questões 50, 52 e 53 (página 24)"},
+    {"disciplina": "Matemática", "assunto": "Numeral decimal", "tarefa": "Para casa: questões 36 a 38 (página 115)"}
+  ],
   "confidence": number,
   "needs_review": boolean
 }"""
@@ -369,12 +386,12 @@ def extract_routine(text: str | None = None, image_bytes: bytes | None = None,
         raise ExtractionFailed(f"VALIDATION_ERROR: {exc}") from exc
 
 
-def _normalize_agenda_shape(data: dict) -> dict | None:
-    """Agenda do dia (várias matérias) → primeira tarefa no nosso schema.
+def _normalize_agenda_shapes(data: dict) -> list[dict] | None:
+    """Agenda do dia (várias matérias) → N tarefas no nosso schema.
 
-    Observado ao vivo: o modelo descreve a página inteira em vez de uma tarefa
-    ({"data": "21/09/2026", "turma": ..., "tarefas": [{disciplina, tarefa, ...}]}).
-    Mapeia a 1ª tarefa e sinaliza needs_review (humano confirma o resto).
+    Observado ao vivo (28/09/2026): foto com Português + Matemática retornava
+    só a 1ª tarefa (perda de dados). Agora mapeia TODAS as tarefas de casa,
+    uma por matéria, cada uma com needs_review=True.
     Retorna None se o formato não for agenda.
     """
     import re
@@ -382,27 +399,37 @@ def _normalize_agenda_shape(data: dict) -> dict | None:
     tarefas = data.get("tarefas")
     if not isinstance(tarefas, list) or not tarefas:
         return None
-    first = next((t for t in tarefas if isinstance(t, dict)), None)
-    if first is None:
+    valid = [t for t in tarefas if isinstance(t, dict)]
+    if not valid:
         return None
     due = None
     m = re.search(r"(\d{2})/(\d{2})/(\d{4})", str(data.get("data") or ""))
     if m:
         due = f"{m.group(3)}-{m.group(2)}-{m.group(1)}"
-    subject = (first.get("disciplina") or data.get("subject") or "Outro").strip() or "Outro"
-    task = (first.get("tarefa") or "").strip()
-    topic = (first.get("assunto") or "").strip()
-    statement = " — ".join(p for p in (task, topic) if p) or None
-    title = (topic or task).strip()
-    title = " ".join(title.split()[:8]) or "Tarefa da agenda"
     try:
         conf = float(data.get("confidence", 0.6))
     except (TypeError, ValueError):
         conf = 0.6
-    return {"is_homework": True, "subject": subject, "title": title or "Tarefa da agenda",
-            "statement": statement, "due_at": due, "estimated_minutes": None,
-            "priority": 1, "confidence": min(max(conf, 0.0), 1.0), "needs_review": True,
-            "_normalized_from": "agenda"}
+    conf = min(max(conf, 0.0), 1.0)
+    out: list[dict] = []
+    for item in valid:
+        subject = (item.get("disciplina") or data.get("subject") or "Outro").strip() or "Outro"
+        task = (item.get("tarefa") or "").strip()
+        topic = (item.get("assunto") or "").strip()
+        statement = " — ".join(p for p in (task, topic) if p) or None
+        title = (topic or task).strip()
+        title = " ".join(title.split()[:8]) or "Tarefa da agenda"
+        out.append({"is_homework": True, "subject": subject, "title": title or "Tarefa da agenda",
+                    "statement": statement, "due_at": due, "estimated_minutes": None,
+                    "priority": 1, "confidence": conf, "needs_review": True,
+                    "_normalized_from": "agenda"})
+    return out
+
+
+def _normalize_agenda_shape(data: dict) -> dict | None:
+    """Compat: primeira tarefa da agenda (extract_homework single)."""
+    shapes = _normalize_agenda_shapes(data)
+    return shapes[0] if shapes else None
 
 
 def _parse_with_retry(client, settings, messages):
@@ -425,75 +452,8 @@ def _parse_with_retry(client, settings, messages):
         raise
 
 
-def extract_homework(
-    image_bytes: bytes,
-    hint_text: str | None = None,
-    client=None,
-    settings: Settings | None = None,
-    system_prompt: str | None = None,
-) -> ExtractionResult:
-    """Foto → JSON validado via OpenRouter (multimodal imagem+texto)."""
-    settings = settings or get_settings()
-    if not settings.AI_ENABLED:
-        raise ExtractionFailed("AI_DISABLED")
-
-    try:
-        anonymized, sha = anonymize_image(
-            image_bytes, max_side=settings.AI_LLM_MAX_SIDE, quality=settings.AI_JPEG_QUALITY
-        )
-    except Exception as exc:
-        # inclui DecompressionBombError: falha graciosa, nunca derruba o worker
-        raise ExtractionFailed(f"INVALID_IMAGE: {type(exc).__name__}") from exc
-    b64 = base64.b64encode(anonymized).decode("ascii")
-    system = system_prompt or _load_system_prompt()
-    if hint_text:
-        system = system + f"\nDica do responsável: {hint_text}"
-
-    messages = [
-        {
-            "role": "user",
-            "content": [
-                {"type": "text", "text": system},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            ],
-        }
-    ]
-
-    own_client = False
-    if client is None:
-        client = _get_client(settings)
-        own_client = True
-
-    usages: list = []
-    try:
-        resp, data, usages = _parse_with_retry(client, settings, messages)
-    except (OpenRouterRateLimited, ExtractionFailed):
-        raise
-    except Exception as exc:
-        raise ExtractionFailed(f"INVALID_JSON: {exc}") from exc
-    finally:
-        if own_client:
-            try:
-                client.close()
-            except Exception:
-                pass
-
-    if "subject" not in data and "is_homework" not in data:
-        agenda = _normalize_agenda_shape(data)
-        if agenda is not None:
-            data = agenda
-
-    usage = getattr(resp, "usage", None)
-    prompt_tokens = sum(int(getattr(u, "prompt_tokens", 0) or 0) for u in usages if u is not None)
-    completion_tokens = sum(int(getattr(u, "completion_tokens", 0) or 0) for u in usages if u is not None)
-    meta = {
-        "engine": settings.OPENROUTER_MODEL,
-        "provider": "openrouter",
-        "prompt_tokens": prompt_tokens or getattr(usage, "prompt_tokens", None),
-        "completion_tokens": completion_tokens or getattr(usage, "completion_tokens", None),
-        "image_sha256": sha,
-    }
-
+def _build_result(data: dict, meta: dict, settings: Settings) -> ExtractionResult:
+    """Dict validado → ExtractionResult (single)."""
     is_hw = bool(data.get("is_homework", True))
     if not is_hw:
         return ExtractionResult(
@@ -503,7 +463,6 @@ def extract_homework(
             extraction_status="descartada",
             meta=meta,
         )
-
     subject = data.get("subject")
     if subject is not None:
         from app.services.textnorm import normalize_subject
@@ -511,13 +470,10 @@ def extract_homework(
         subject, _ = normalize_subject(subject)
     confidence = float(data.get("confidence", 0.0))
     due_at = data.get("due_at")
-
     needs_review = bool(data.get("needs_review", False)) or confidence < settings.AI_CONFIDENCE_OK or subject is None or due_at is None
     status = "ok" if confidence >= settings.AI_CONFIDENCE_OK and not needs_review else "baixa_confianca"
-    # confiança < limiar de review → força revisão mesmo se modelo disse False
     if confidence < settings.AI_CONFIDENCE_OK:
         needs_review = True
-
     try:
         return ExtractionResult(
             is_homework=True,
@@ -534,3 +490,103 @@ def extract_homework(
         )
     except Exception as exc:
         raise ExtractionFailed(f"VALIDATION_ERROR: {exc}") from exc
+
+
+def _call_llm(image_bytes: bytes, hint_text, client, settings, system_prompt=None):
+    """Anonimiza + chama OpenRouter 1×. Retorna (data, meta, usages, resp)."""
+    try:
+        anonymized, sha = anonymize_image(
+            image_bytes, max_side=settings.AI_LLM_MAX_SIDE, quality=settings.AI_JPEG_QUALITY
+        )
+    except Exception as exc:
+        raise ExtractionFailed(f"INVALID_IMAGE: {type(exc).__name__}") from exc
+    b64 = base64.b64encode(anonymized).decode("ascii")
+    system = system_prompt or _load_system_prompt()
+    if hint_text:
+        system = system + f"\nDica do responsável: {hint_text}"
+    messages = [{"role": "user", "content": [
+        {"type": "text", "text": system},
+        {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+    ]}]
+    own_client = False
+    if client is None:
+        client = _get_client(settings)
+        own_client = True
+    try:
+        resp, data, usages = _parse_with_retry(client, settings, messages)
+    except (OpenRouterRateLimited, ExtractionFailed):
+        raise
+    except Exception as exc:
+        raise ExtractionFailed(f"INVALID_JSON: {exc}") from exc
+    finally:
+        if own_client:
+            try:
+                client.close()
+            except Exception:
+                pass
+    usage = getattr(resp, "usage", None)
+    prompt_tokens = sum(int(getattr(u, "prompt_tokens", 0) or 0) for u in usages if u is not None)
+    completion_tokens = sum(int(getattr(u, "completion_tokens", 0) or 0) for u in usages if u is not None)
+    meta = {
+        "engine": settings.OPENROUTER_MODEL,
+        "provider": "openrouter",
+        "prompt_tokens": prompt_tokens or getattr(usage, "prompt_tokens", None),
+        "completion_tokens": completion_tokens or getattr(usage, "completion_tokens", None),
+        "image_sha256": sha,
+    }
+    return data, meta
+
+
+def _expand_datas(data: dict) -> list[dict]:
+    """Resposta bruta → lista de dicts single-task (agenda vira N, resto vira 1)."""
+    if "subject" not in data and "is_homework" not in data:
+        shapes = _normalize_agenda_shapes(data)
+        if shapes is not None:
+            return shapes
+    return [data]
+
+
+def extract_homeworks(
+    image_bytes: bytes,
+    hint_text: str | None = None,
+    client=None,
+    settings: Settings | None = None,
+    system_prompt: str | None = None,
+) -> list[ExtractionResult]:
+    """Foto → lista de ExtractionResult (1 por matéria 'para casa').
+
+    Compat: foto de tarefa única retorna [1 item]; agenda multi-matéria
+    retorna N itens (bug 2026-09-28: antes só a 1ª era aproveitada).
+    1 chamada LLM por foto (expansão local, sem custo extra).
+    """
+    settings = settings or get_settings()
+    if not settings.AI_ENABLED:
+        raise ExtractionFailed("AI_DISABLED")
+    data, meta = _call_llm(image_bytes, hint_text, client, settings, system_prompt)
+    datas = _expand_datas(data)
+    results = [_build_result(d, dict(meta), settings) for d in datas]
+    if len(results) > 1:
+        for i, r in enumerate(results):
+            r.meta["sibling_index"] = i
+            r.meta["siblings_total"] = len(results)
+    return results
+
+
+def extract_homework(
+    image_bytes: bytes,
+    hint_text: str | None = None,
+    client=None,
+    settings: Settings | None = None,
+    system_prompt: str | None = None,
+) -> ExtractionResult:
+    """Seam estável (testes mockam aqui): primeira tarefa + irmãs em meta['siblings'].
+
+    run_extraction chama esta função (1 chamada LLM) e expande as irmãs.
+    Mocks antigos sem 'siblings' → comportamento single inalterado.
+    """
+    results = extract_homeworks(image_bytes, hint_text=hint_text, client=client,
+                                settings=settings, system_prompt=system_prompt)
+    first = results[0]
+    if len(results) > 1:
+        first.meta["siblings"] = [r.model_dump(mode="json") for r in results[1:]]
+    return first

@@ -64,8 +64,10 @@ def test_extract_calls_openrouter_with_nex_free_and_parses_json():
     result = extract_homework(_make_test_image(800, 600), hint_text="é de matemática", client=mock_client)
 
     # chamada OpenRouter correta (SPECS §5.2 E2)
+    from app.core.config import get_settings as _gs
+
     _, kwargs = mock_client.chat.completions.create.call_args
-    assert kwargs["model"] == "nex-agi/nex-n2.5-mini"
+    assert kwargs["model"] == _gs().OPENROUTER_MODEL
     assert kwargs["response_format"] == {"type": "json_object"}
     assert kwargs["temperature"] == 0.1
     assert kwargs["max_tokens"] == 4096
@@ -82,7 +84,9 @@ def test_extract_calls_openrouter_with_nex_free_and_parses_json():
     assert result.subject == "Matemática"
     assert result.confidence == pytest.approx(0.91)
     assert result.needs_review is False
-    assert result.meta["engine"] == "nex-agi/nex-n2.5-mini"
+    from app.core.config import get_settings as _gs2
+
+    assert result.meta["engine"] == _gs2().OPENROUTER_MODEL
     assert mock_client.chat.completions.create.call_count == 1  # sem duplicar custo
 
 
@@ -174,6 +178,37 @@ def test_agenda_shape_normalizes_first_task():
     assert result.extraction_status == "baixa_confianca"
 
 
+def test_agenda_multi_task_returns_all_subjects():
+    """Bug 2026-09-28: agenda Português+Matemática perdia a 2ª. extract_homeworks retorna N."""
+    import json
+    from unittest.mock import MagicMock
+
+    from app.services.vision_openrouter import extract_homeworks
+
+    agenda = {"data": "28/09/2026 - Segunda-Feira", "turma": "4º Ano - B",
+              "tarefas": [
+                  {"disciplina": "Português", "assunto": "Estudo de texto",
+                   "tarefa": "Para casa: questões 50, 52 e 53 (página 24)"},
+                  {"disciplina": "Matemática", "assunto": "Numeral decimal",
+                   "tarefa": "Para casa: questões 36 a 38 (página 115)"},
+              ],
+              "confidence": 0.9}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=json.dumps(agenda)))],
+        usage=MagicMock(prompt_tokens=400, completion_tokens=300),
+    )
+    results = extract_homeworks(_make_test_image(800, 600), client=mock_client)
+    assert len(results) == 2
+    subjects = {r.subject for r in results}
+    assert subjects == {"Português", "Matemática"}
+    assert mock_client.chat.completions.create.call_count == 1  # 1 chamada, expansão local
+    for r in results:
+        assert r.is_homework is True
+        assert r.needs_review is True
+        assert r.due_at == "2026-09-28"
+
+
 def test_empty_content_retries_once_then_succeeds():
     """Quirk do provider (content None): 1 retry imediato; usages somados."""
     import json
@@ -252,3 +287,35 @@ def test_rate_limit_raises_retryable():
 
     with pytest.raises(OpenRouterRateLimited):
         extract_homework(_make_test_image(800, 600), client=mock_client)
+
+
+def test_run_extraction_creates_sibling_homeworks():
+    """Integração: agenda com 2 matérias cria 2 Homeworks (primária + irmã)."""
+    import json
+    from unittest.mock import MagicMock
+
+    from app.tasks import routine as R
+    from app.tasks.extract import get_or_create_homework, list_homeworks, run_extraction
+
+    R.clear_routine()
+    kid = R.create_child("Enzo")["id"]
+    rec, dedup = get_or_create_homework(_make_test_image(800, 600), child_id=kid)
+    assert dedup is False
+    agenda = {"data": "28/09/2026 - Segunda-Feira",
+              "tarefas": [
+                  {"disciplina": "Português", "assunto": "Estudo de texto",
+                   "tarefa": "Para casa q 50 52 53 p24"},
+                  {"disciplina": "Matemática", "assunto": "Decimal",
+                   "tarefa": "Para casa q 36 a 38 p115"},
+              ],
+              "confidence": 0.9}
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = MagicMock(
+        choices=[MagicMock(message=MagicMock(content=json.dumps(agenda)))],
+        usage=MagicMock(prompt_tokens=10, completion_tokens=10),
+    )
+    out = run_extraction(rec["homework_id"], client=mock_client)
+    assert out["subject"] == "Português"
+    items = list_homeworks()
+    assert len(items) == 2
+    assert {h["subject"] for h in items} == {"Português", "Matemática"}

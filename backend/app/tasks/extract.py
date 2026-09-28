@@ -313,10 +313,43 @@ def infer_due_from_grade(child_id: str, subject: str | None, now=None):
     return None
 
 
+def _apply_result(hw, result, infer: bool = True):
+    """Preenche Homework a partir de ExtractionResult (primária ou irmã)."""
+    hw.subject = result.subject
+    hw.title = result.title
+    hw.statement = result.statement
+    hw.due_at = _parse_result_due(result.due_at)
+    hw.estimated_minutes = result.estimated_minutes
+    hw.priority = result.priority
+    hw.extraction_confidence = result.confidence
+    hw.extraction_status = result.extraction_status
+    hw.extraction_json = result.model_dump()
+    if hw.due_at is not None and _to_utc_naive(hw.due_at) < _to_utc_naive(
+            datetime.now(timezone.utc)):
+        hw.due_at = None
+        hw.extraction_status = "baixa_confianca"
+        meta = dict((hw.extraction_json or {}).get("meta", {}))
+        meta["due_rejected"] = result.due_at
+        hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
+    if infer and hw.due_at is None and hw.subject:
+        inferred = infer_due_from_grade(hw.child_id, hw.subject)
+        if inferred is not None:
+            hw.due_at = inferred
+            hw.extraction_status = "baixa_confianca"
+            meta = dict((hw.extraction_json or {}).get("meta", {}))
+            meta["due_inferred_from"] = "grade"
+            hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
+
+
 def run_extraction(homework_id: str, client=None) -> dict | None:
-    """Background: storage→anonimiza→OpenRouter→atualiza registro. Idempotente por homework_id."""
+    """Background: storage→anonimiza→OpenRouter→atualiza registro. Idempotente por homework_id.
+
+    Multi-tarefa (2026-09-28): foto de agenda com N 'para casa' cria N Homeworks
+    (primária + irmãs com a mesma imagem). 1 chamada LLM por foto.
+    """
     from app.services.vision_openrouter import ExtractionFailed, OpenRouterRateLimited, extract_homework
 
+    sibling_ids: list[str] = []
     with session_scope() as s:
         hw = s.get(Homework, homework_id)
         if hw is None:
@@ -340,7 +373,19 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
             return _to_dict(hw)
         hint = (hw.extraction_json or {}).get("meta", {}).get("hint_text")
         try:
+            # Seam estável: testes mockam extract_homework (singular).
+            # Multi-tarefa via meta['siblings'] (1 chamada LLM).
             result = extract_homework(image_bytes, hint_text=hint, client=client)
+            siblings_raw = list((result.meta or {}).get("siblings") or [])
+            results = [result]
+            if siblings_raw:
+                from app.schemas.extraction import ExtractionResult as _ER
+
+                for sib_dict in siblings_raw:
+                    try:
+                        results.append(_ER(**sib_dict) if isinstance(sib_dict, dict) else sib_dict)
+                    except Exception:
+                        continue
         except OpenRouterRateLimited as exc:
             hw.extraction_status = "processando"
             meta = dict((hw.extraction_json or {}).get("meta", {}))
@@ -356,8 +401,6 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
             hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
             s.flush()
             try:
-                # mesma sessão (evita lock do sqlite com sessão aninhada);
-                # idempotente por key: repetir a falha não duplica o aviso
                 from datetime import datetime as _dt
 
                 from app.core.db import TZ as _TZ
@@ -368,42 +411,56 @@ def run_extraction(homework_id: str, client=None) -> dict | None:
             except Exception:
                 pass
             return _to_dict(hw)
+        result = results[0]
         if not result.is_homework:
             hw.extraction_status = "descartada"
             hw.extraction_confidence = result.confidence
             s.flush()
             return _to_dict(hw)
-        hw.subject = result.subject
-        hw.title = result.title
-        hw.statement = result.statement
-        hw.due_at = _parse_result_due(result.due_at)
-        hw.estimated_minutes = result.estimated_minutes
-        hw.priority = result.priority
-        hw.extraction_confidence = result.confidence
-        hw.extraction_status = result.extraction_status
-        hw.extraction_json = result.model_dump()
-        if hw.due_at is not None and _to_utc_naive(hw.due_at) < _to_utc_naive(
-                datetime.now(timezone.utc)):
-            # data passada alucinada/errada: descarta e cai na inferência abaixo
-            hw.due_at = None
-            hw.extraction_status = "baixa_confianca"
+        _apply_result(hw, result)
+        # irmãs: mesma foto, matérias restantes (mesmo child/dono)
+        for extra in results[1:]:
+            if not extra.is_homework:
+                continue
+            nid = str(uuid.uuid4())
+            sib = Homework(id=nid, child_id=hw.child_id, created_by_user_id=hw.created_by_user_id,
+                           status="pendente", extraction_status="processando",
+                           extraction_json={"meta": {"image_sha256": extra.meta.get("image_sha256"),
+                                                     "sibling_of": homework_id}})
+            s.add(sib)
+            s.flush()
+            _apply_result(sib, extra)
+            try:
+                storage_key = f"original/{nid}.jpg"
+                get_storage().put(storage_key, image_bytes, img.mime_type or "image/jpeg")
+                s.add(HomeworkImage(id=str(uuid.uuid4()), homework_id=nid, storage_key=storage_key,
+                                    mime_type=img.mime_type or "image/jpeg",
+                                    size_bytes=len(image_bytes),
+                                    sha256=extra.meta.get("image_sha256") or sha256_bytes(image_bytes),
+                                    expires_at=datetime.now(timezone.utc) + timedelta(days=retention_days())))
+            except Exception:
+                pass
+            s.flush()
+            sibling_ids.append(nid)
+        # registra vínculo no JSON da primária (auditoria)
+        if sibling_ids:
             meta = dict((hw.extraction_json or {}).get("meta", {}))
-            meta["due_rejected"] = result.due_at
+            meta["sibling_ids"] = sibling_ids
             hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
-        if hw.due_at is None and hw.subject:
-            inferred = infer_due_from_grade(hw.child_id, hw.subject)
-            if inferred is not None:
-                hw.due_at = inferred
-                hw.extraction_status = "baixa_confianca"
-                meta = dict((hw.extraction_json or {}).get("meta", {}))
-                meta["due_inferred_from"] = "grade"
-                hw.extraction_json = {**(hw.extraction_json or {}), "meta": meta}
+            s.flush()
         s.flush()
         rec = _to_dict(hw)
+        if sibling_ids:
+            rec["sibling_ids"] = sibling_ids
     try:
         from app.tasks import notify as _N
 
         _N.schedule_for_homework(homework_id)
+        for nid in sibling_ids:
+            try:
+                _N.schedule_for_homework(nid)
+            except Exception:
+                continue
     except Exception:
         pass
     return rec
@@ -487,6 +544,8 @@ def retry_stale_extractions(now: datetime | None = None, older_than_minutes: int
 MODEL_RATES = {
     "nex-agi/nex-n2.5-mini": (0.025, 0.10),
     "nex-agi/nex-n2.5-mini:free": (0.0, 0.0),
+    "meta/muse-spark-1.3-contributor": (0.025, 0.10),
+    "meta/muse-spark-1.3-contributor:free": (0.0, 0.0),
 }
 
 

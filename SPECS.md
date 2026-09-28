@@ -851,8 +851,10 @@ Regras:
 - "confidence": 0.0 a 1.0, sua certeza geral.
 - "needs_review": true se qualquer campo crítico incerto.
 - Se a imagem não for uma tarefa escolar, retorne {"is_homework": false, "confidence": 0.9, "needs_review": true}.
+- MULTI-TAREFA (obrigatório): se a imagem contiver várias matérias com "para casa",
+  retorne o formato agenda com TODAS as tarefas (ver §5.4b), nunca apenas a primeira.
 
-Esquema:
+Esquema tarefa única:
 {
   "is_homework": true,
   "subject": "string",
@@ -861,6 +863,18 @@ Esquema:
   "due_at": "YYYY-MM-DD|null",
   "estimated_minutes": integer|null,
   "priority": 0|1|2,
+  "confidence": number,
+  "needs_review": boolean
+}
+
+Esquema agenda multi-tarefa:
+{
+  "data": "DD/MM/YYYY",
+  "turma": "string|null",
+  "tarefas": [
+    {"disciplina": "Português", "assunto": "...", "tarefa": "Para casa: ..."},
+    {"disciplina": "Matemática", "assunto": "...", "tarefa": "Para casa: ..."}
+  ],
   "confidence": number,
   "needs_review": boolean
 }
@@ -906,6 +920,23 @@ resp = client.chat.completions.create(
   }
 }
 ```
+
+### 5.4b Agenda multi-tarefa (bug 2026-09-28)
+
+Foto de agenda/bilhete com N "para casa" (ex.: Português + Matemática na mesma
+página) gera **N Homeworks** (1 por matéria), não só o primeiro. Protocolo:
+
+- Prompt (§5.3) instrui o modelo a retornar o formato agenda com **todas** as
+  tarefas: `{"data": "DD/MM/YYYY", "turma": ..., "tarefas": [{disciplina, assunto,
+  tarefa}...], "confidence": ...}` — 1 chamada LLM por foto (expansão local).
+- `extract_homeworks()` normaliza cada item p/ o schema single
+  (`_normalize_agenda_shapes`); `extract_homework()` (seam estável mockado nos
+  testes) retorna a primeira com as irmãs em `meta['siblings']`.
+- `run_extraction()` atualiza a primária e cria as irmãs (mesmo `child_id`/dono,
+  mesma imagem com novo `storage_key`, `meta.sibling_of` + `meta.sibling_ids` na
+  primária p/ auditoria), agendando `sugestao_inicial`/lembretes p/ cada uma.
+- Idempotência preservada: reprocessamento com status terminal retorna sem
+  duplicar; re-upload da mesma foto cai no dedupe por `sha256` existente.
 
 ### 5.5 Thresholds, rate limit e fallback
 

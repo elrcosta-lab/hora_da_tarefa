@@ -15,9 +15,14 @@ Regras:
 - "confidence": 0.0 a 1.0, sua certeza geral.
 - "needs_review": true se qualquer campo crítico incerto.
 - Se a imagem não for uma tarefa escolar, retorne {"is_homework": false, "confidence": 0.9, "needs_review": true}.
+- MULTI-TAREFA (obrigatório): se a imagem contiver várias matérias com "para casa"
+  (ex.: agenda do dia, bilhete com Português + Matemática), retorne o formato agenda
+  com TODAS as tarefas de casa, nunca apenas a primeira. Cada item de "tarefas" é
+  uma matéria distinta: {"disciplina": "...", "assunto": "...", "tarefa": "..."}.
+  Transcreva cada "para casa" fielmente; não resuma N tarefas em 1.
 - Omita chaves com valor null para economizar tokens.
 
-Esquema:
+Esquema tarefa única:
 {
   "is_homework": true,
   "subject": "string",
@@ -26,6 +31,18 @@ Esquema:
   "due_at": "YYYY-MM-DD|null",
   "estimated_minutes": integer|null,
   "priority": 0|1|2,
+  "confidence": number,
+  "needs_review": boolean
+}
+
+Esquema agenda multi-tarefa (2+ "para casa" na mesma foto):
+{
+  "data": "DD/MM/YYYY",
+  "turma": "string|null",
+  "tarefas": [
+    {"disciplina": "Português", "assunto": "Estudo de texto", "tarefa": "Para casa: questões 50, 52 e 53 (página 24)"},
+    {"disciplina": "Matemática", "assunto": "Numeral decimal", "tarefa": "Para casa: questões 36 a 38 (página 115)"}
+  ],
   "confidence": number,
   "needs_review": boolean
 }
