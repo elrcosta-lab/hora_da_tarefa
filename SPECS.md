@@ -580,7 +580,10 @@ penaliza sem bloquear), `week_parity` (null=toda semana, 0=pares ISO, 1=ímpares
 âncora obrigatória "esta semana"=atual/"outra"=invertida, sem âncora→null+warning) e
 `date` (exceção do dia, ex. folga 00:00–23:59, sobrescreve a regra semanal).
 Turno detectado da grade (`detect_shift`; `preferences.shift` sobrescreve): vespertino
-prioriza manhãs livres (foco 8–12h).
+prioriza manhãs livres (foco 8–12h). `is_blocking` das atividades (2026-09-28):
+compromissos em horário fixo (esporte, terapia, curso — ex. Natação 18:15) bloqueiam
+o motor; `false` só p/ atividade flexível. Importação orienta o modelo nesse
+sentido; UI mostra o selo "bloqueia agenda" (página Crianças).
 
 ### 3.8 `GET /suggestions`
 
