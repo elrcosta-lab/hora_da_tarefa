@@ -31,6 +31,48 @@ def detect_mime(data: bytes) -> str | None:
     return None
 
 
+def _sp_day(value) -> str | None:
+    """YYYY-MM-DD em America/Sao_Paulo a partir de datetime ou ISO.
+
+    Postgres devolve aware em UTC; sqlite devolve naive (SP). Sem converter
+    para SP, tarefas com entrega 23:59 SP aparecem com data UTC (+1 dia) e
+    o atraso so e detectado um dia depois (bug 2026-09-29).
+    """
+    if value is None:
+        return None
+    try:
+        from app.core.db import TZ, as_aware
+
+        if isinstance(value, str):
+            dt = datetime.fromisoformat(value)
+        else:
+            dt = value
+        dt = as_aware(dt, TZ)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=TZ)
+        else:
+            dt = dt.astimezone(TZ)
+        return dt.date().isoformat()
+    except Exception:
+        try:
+            return str(value)[:10]
+        except Exception:
+            return None
+
+
+def _sp_iso(dt) -> str | None:
+    """ISO sempre em SP — fatiar [:10] no frontend/backend da a data local correta."""
+    if dt is None:
+        return None
+    try:
+        from app.core.db import TZ, as_aware
+
+        aware = as_aware(dt, TZ)
+        return aware.astimezone(TZ).isoformat()
+    except Exception:
+        return None
+
+
 def _to_dict(hw: Homework) -> dict:
     needs_review = None
     if hw.extraction_status not in ("descartada", "falhou", "processando"):
@@ -48,15 +90,15 @@ def _to_dict(hw: Homework) -> dict:
         "subject": hw.subject,
         "title": hw.title,
         "statement": hw.statement,
-        "due_at": as_aware(hw.due_at).isoformat() if hw.due_at else None,
+        "due_at": _sp_iso(hw.due_at),
         "estimated_minutes": hw.estimated_minutes,
         "priority": hw.priority,
         "confidence": float(hw.extraction_confidence) if hw.extraction_confidence is not None else None,
         "needs_review": needs_review,
         "extraction_json": hw.extraction_json,
-        "scheduled_start": as_aware(hw.scheduled_start).isoformat() if hw.scheduled_start else None,
-        "scheduled_end": as_aware(hw.scheduled_end).isoformat() if hw.scheduled_end else None,
-        "updated_at": as_aware(hw.updated_at).isoformat() if hw.updated_at else None,
+        "scheduled_start": _sp_iso(hw.scheduled_start),
+        "scheduled_end": _sp_iso(hw.scheduled_end),
+        "updated_at": _sp_iso(hw.updated_at),
     }
 
 
@@ -203,12 +245,12 @@ def today_overview(owner_user_id: str, child_id: str | None = None, date: str | 
                 "estimated_minutes": r.get("estimated_minutes"),
                 "scheduled_start": r.get("scheduled_start")}
 
-    due_today = [_item(r) for r in items if r.get("due_at") and r["due_at"][:10] == today
+    due_today = [_item(r) for r in items if r.get("due_at") and _sp_day(r.get("due_at")) == today
                  and r.get("status") not in TERMINAL]
     overdue = [_item(r) for r in items if r.get("status") == "atrasada"
-               or (r.get("due_at") and r["due_at"][:10] < today
-                   and r.get("status") in ("pendente", "agendada"))]
-    scheduled = [_item(r) for r in items if r.get("scheduled_start") and r["scheduled_start"][:10] == today
+               or (r.get("due_at") and (_sp_day(r.get("due_at")) or "") < today
+                   and r.get("status") in ("pendente", "agendada", "em_andamento"))]
+    scheduled = [_item(r) for r in items if r.get("scheduled_start") and _sp_day(r.get("scheduled_start")) == today
                  and r.get("status") not in TERMINAL]
     return {"date": today, "due_today": due_today, "overdue": overdue, "scheduled_today": scheduled}
 
@@ -697,13 +739,13 @@ def mark_overdue(now: str | None = None) -> list[str]:
     marked: list[str] = []
     with session_scope() as s:
         rows = s.query(Homework).filter(Homework.status.in_(["pendente", "agendada"])).all()
-        today = (now or _dt.now().astimezone().isoformat())[:10]
+        today = _sp_day(now or _dt.now().astimezone().isoformat()) or (now or _dt.now().astimezone().isoformat())[:10]
         for hw in rows:
             if not hw.due_at:
                 continue
             try:
-                due_day = as_aware(hw.due_at).isoformat()[:10]
-                if due_day < today:
+                due_day = _sp_day(hw.due_at)
+                if due_day is not None and due_day < today:
                     hw.status = "atrasada"
                     hw.updated_at = _dt.now(timezone.utc)
                     marked.append(hw.id)

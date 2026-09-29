@@ -79,9 +79,18 @@ export default function DashboardPage() {
       setChildId(kids.items[0].id);
       return;
     }    setToday(t);
-    const pend = all.items.filter((i) => i.status === "pendente").length;
-    const ag = all.items.filter((i) => i.status === "agendada").length;
-    const atr = all.items.filter((i) => i.status === "atrasada").length;
+    // Atraso é calculado pela data de entrega (SP), não só pelo status:
+    // o beat marca "atrasada" em até 1 min, mas o KPI não pode zerar
+    // enquanto houver tarefa vencida ainda como pendente/agendada.
+    const todayStr = t.date;
+    const isOverdue = (i: TaskItem) =>
+      i.status === "atrasada" ||
+      (!!i.due_at &&
+        i.due_at.slice(0, 10) < todayStr &&
+        ["pendente", "agendada", "em_andamento"].includes(i.status));
+    const pend = all.items.filter((i) => i.status === "pendente" && !isOverdue(i)).length;
+    const ag = all.items.filter((i) => i.status === "agendada" && !isOverdue(i)).length;
+    const atr = all.items.filter(isOverdue).length;
     const con = all.items.filter((i) => i.status === "concluida").length;
     setKpis({ pendentes: pend, agendadas: ag, atrasadas: atr, concluidas: con });
     setUpcoming(all.items.filter((i) => ["pendente", "agendada", "em_andamento", "atrasada"].includes(i.status)).slice(0, 8));
