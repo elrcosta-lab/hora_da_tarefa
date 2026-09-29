@@ -1,7 +1,9 @@
-"""TDD RED — Lembretes 24h/2h com notification_log (SPECS §2.11 §6.4, PRD RF-10, CA-03).
+"""Lembretes 24h/2h com notification_log (SPECS §2.11 §6.4, PRD RF-10, CA-03).
 
-Regras: dedupe por idempotency_key {kind}:{homework}:{child} (nunca duplica),
-quiet 22h–07h empurra p/ 07:00, dispatch duplo envia uma única vez.
+Regras: lembretes baseados no agendamento (scheduled_start, quando a tarefa
+será realizada); dedupe por idempotency_key {kind}:{homework}:{child}
+(nunca duplica), quiet 21:30–07h empurra p/ 07:00, dispatch duplo envia
+uma única vez. Sem scheduled_start, só sugestao_inicial (+ atraso se vencida).
 """
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -62,7 +64,24 @@ def _setup(client):
     return h, cid
 
 
-def test_schedule_creates_24h_and_2h():
+def _agendar(hid: str, start_iso: str = "2026-09-24T16:00:00-03:00"):
+    """Define scheduled_start (agendamento p/ realização) e agenda os lembretes."""
+    from datetime import datetime as _dt
+
+    from app.core.db import session_scope
+    from app.models import Homework
+    from app.tasks import notify as N
+
+    with session_scope() as s:
+        hw = s.get(Homework, hid)
+        hw.scheduled_start = _dt.fromisoformat(start_iso)
+        hw.scheduled_end = _dt.fromisoformat("2026-09-24T16:40:00-03:00")
+        s.flush()
+    return N.schedule_for_homework(hid)
+
+
+def test_schedule_without_agendamento_has_no_24h_2h():
+    """Sem scheduled_start, só sugestao_inicial (lembretes nascem no accept)."""
     from app.tasks import notify as N
 
     c = _client()
@@ -70,10 +89,28 @@ def test_schedule_creates_24h_and_2h():
     hid = _upload_with_due(c, h, cid, due="2026-09-25")
     recs = N.list_notifications(homework_id=hid)
     kinds = {r["kind"] for r in recs}
+    assert "sugestao_inicial" in kinds
+    assert "lembrete_24h" not in kinds
+    assert "lembrete_2h" not in kinds
+
+
+def test_schedule_creates_24h_and_2h():
+    from app.tasks import notify as N
+
+    c = _client()
+    h, cid = _setup(c)
+    hid = _upload_with_due(c, h, cid, due="2026-09-25")
+    _agendar(hid, "2026-09-24T16:00:00-03:00")
+    recs = N.list_notifications(homework_id=hid)
+    kinds = {r["kind"] for r in recs}
     assert {"lembrete_24h", "lembrete_2h"} <= kinds
     # idempotency keys únicas
     keys = [r["idempotency_key"] for r in recs]
     assert len(keys) == len(set(keys))
+    # baseados no agendamento: 24h/2h antes do scheduled_start
+    by_kind = {r["kind"]: r for r in recs}
+    assert by_kind["lembrete_24h"]["scheduled_for"].isoformat() == "2026-09-23T16:00:00-03:00"
+    assert by_kind["lembrete_2h"]["scheduled_for"].isoformat() == "2026-09-24T14:00:00-03:00"
 
 
 def test_dispatch_sends_once_even_if_run_twice():
@@ -82,6 +119,7 @@ def test_dispatch_sends_once_even_if_run_twice():
     c = _client()
     h, cid = _setup(c)
     hid = _upload_with_due(c, h, cid, due="2026-09-25")
+    _agendar(hid, "2026-09-24T16:00:00-03:00")
     # força vencimento: tudo devido agora
     sent1 = N.dispatch_due(now=datetime(2026, 9, 26, 12, 0, tzinfo=TZ))
     sent2 = N.dispatch_due(now=datetime(2026, 9, 26, 12, 0, tzinfo=TZ))
@@ -99,17 +137,32 @@ def test_quiet_hours_pushes_to_0700():
 
     c = _client()
     h, cid = _setup(c)
-    # due 2026-09-25 23:59 → 2h antes = 21:59 (dentro da janela, ok);
-    # due 2026-09-26 01:00 → 2h antes = 23:00 (quiet) → deve ir p/ 07:00 do dia 26
+    # agendamento 2026-09-26 01:00 → 2h antes = 23:00 (quiet) → deve ir p/ 07:00 do dia 26
     hid = _upload_with_due(c, h, cid, due="2026-09-26")
-    from app.tasks.extract import update_homework_fields
-
-    update_homework_fields(hid, due_at="2026-09-26T01:00:00-03:00")
     N.clear_notifications()
-    N.schedule_for_homework(hid)
+    _agendar(hid, "2026-09-26T01:00:00-03:00")
     recs = {r["kind"]: r for r in N.list_notifications(homework_id=hid)}
     h = recs["lembrete_2h"]["scheduled_for"].hour
     assert h == 7
+
+
+def test_reagendamento_atualiza_lembretes_pendentes():
+    """Novo scheduled_start move os lembretes 24h/2h ainda pendentes (sem duplicar)."""
+    from app.tasks import notify as N
+
+    c = _client()
+    h, cid = _setup(c)
+    hid = _upload_with_due(c, h, cid, due="2026-09-27")
+    _agendar(hid, "2026-09-24T16:00:00-03:00")
+    before = {r["kind"]: r for r in N.list_notifications(homework_id=hid)}
+    assert before["lembrete_2h"]["scheduled_for"].isoformat() == "2026-09-24T14:00:00-03:00"
+    _agendar(hid, "2026-09-25T16:00:00-03:00")
+    after = {r["kind"]: r for r in N.list_notifications(homework_id=hid)}
+    assert after["lembrete_2h"]["scheduled_for"].isoformat() == "2026-09-25T14:00:00-03:00"
+    assert after["lembrete_24h"]["scheduled_for"].isoformat() == "2026-09-24T16:00:00-03:00"
+    # sem duplicar: uma key por kind
+    keys = [r["idempotency_key"] for r in N.list_notifications(homework_id=hid)]
+    assert len(keys) == len(set(keys))
 
 
 def test_settings_get_returns_server_state():
@@ -159,6 +212,7 @@ def test_dispatch_skips_concluded_homework():
     c = _client()
     h, cid = _setup(c)
     hid = _upload_with_due(c, h, cid, due="2026-09-25")
+    _agendar(hid, "2026-09-24T16:00:00-03:00")
     # escoa a FSM até concluída: pendente → em_andamento → concluida
     transition_homework(hid, "em_andamento")
     transition_homework(hid, "concluida")

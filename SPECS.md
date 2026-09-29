@@ -1099,13 +1099,14 @@ Começa {{scheduled_start | HH:mm}}. Vai dar tempo? 💪
 | kind | Gatilho | Idempotency key |
 |---|---|---|
 | `sugestao_inicial` | extração ok/baixa | `sug:{homework_id}:{user_id}` |
-| `lembrete_24h` | `scheduled_for = scheduled_start - 24h` | `r24:{homework_id}:{user_id}` |
-| `lembrete_2h` | `scheduled_for = scheduled_start - 2h` | `r2:{homework_id}:{user_id}` |
+| `lembrete_24h` | `scheduled_for = scheduled_start - 24h` (só com agendamento; sem `scheduled_start` não é criado) | `r24:{homework_id}:{user_id}` |
+| `lembrete_2h` | `scheduled_for = scheduled_start - 2h` (só com agendamento; sem `scheduled_start` não é criado) | `r2:{homework_id}:{user_id}` |
 | `atraso` | beat detecta `due_at < now`, status não final | `late:{homework_id}:{user_id}` |
 | `extracao_falhou` | extração falhou: pede revisão manual da foto | `fail:{homework_id}:{child_id}` |
 | `resumo_diario` | opcional, 07:00 local | `daily:{user_id}:{date}` |
 
 - Respeitar `quiet_hours`: lembretes fora da janela são adiados para o início da janela.
+- Reagendamento: novo `scheduled_start` atualiza os `lembrete_24h`/`lembrete_2h` ainda `scheduled` (sem duplicar a `idempotency_key`); já enviados não são reenviados.
 - `can_receive_notifications=false` no `guardian` → pula.
 - Retry: falha por destinatário incrementa `attempts` com `error` registrado; na 3ª falha → `failed` (não tenta mais). Falha de um não derruba o tick (`run_beat_tick` em `app/tasks/beat.py`).
 - **Tarefa em status terminal nunca gera envio (bug 2026-09-24):** `dispatch_due` reconfere `homework.status` no momento do envio — terminal (`concluida`, `nao_realizada`, `cancelada`, `arquivada`) marca o pendente como `cancelled` em vez de enviar; `transition_homework` para status terminal cancela os `scheduled` restantes; `schedule_for_homework` de tarefa terminal retorna `[]`.

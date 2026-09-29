@@ -1,8 +1,10 @@
 """Lembretes 24h/2h + atraso com notification_log (SPECS §2.11 §6.4, PRD RF-10).
 
+Lembretes 24h/2h são baseados no agendamento (scheduled_start, quando a
+tarefa será realizada); atraso continua baseado em due_at (vencimento).
 Idempotência por key `{kind}:{homework_id}:{child_id}` (UNIQUE no banco).
 Quiet 21:30–07:00 (America/Sao_Paulo) empurra p/ 07:00. Envio real via Telegram
-(aiogram + vínculo chat) entra na fase infra; aqui dispatch marca sent.
+entra na fase infra; aqui dispatch marca sent.
 
 Retorna sempre dicts simples (nunca ORM detached).
 """
@@ -64,6 +66,22 @@ def _parse_due(due) -> datetime | None:
         return None
 
 
+def _parse_scheduled(value) -> datetime | None:
+    """Agendamento para realização (scheduled_start/end). ISO ou datetime; None se ausente/inválido."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return as_aware(value, TZ)
+    s = str(value).strip()
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s)
+        return as_aware(dt, TZ)
+    except Exception:
+        return None
+
+
 def _in_quiet(dt: datetime, quiet_start="21:30", quiet_end="07:00") -> bool:
     def _m(hm: str) -> int:
         h, m = map(int, hm.split(":"))
@@ -112,6 +130,18 @@ def _upsert(s, kind: str, hw_id: str, child_id: str, scheduled_for: datetime) ->
     key = _key(kind, hw_id, child_id)
     existing = s.query(NotificationLog).filter_by(idempotency_key=key).one_or_none()
     if existing is not None:
+        # Reagendamento: se o lembrete ainda está pendente e o horário mudou
+        # (novo scheduled_start), atualiza scheduled_for em vez de manter o antigo.
+        if existing.status == "scheduled":
+            try:
+                new_sf = as_aware(scheduled_for, TZ)
+                old_sf = as_aware(existing.scheduled_for, TZ)
+                if new_sf is not None and old_sf is not None and new_sf != old_sf:
+                    existing.scheduled_for = new_sf.replace(tzinfo=None)
+                    s.flush()
+                    return _to_dict(existing), False
+            except Exception:
+                pass
         return _to_dict(existing), True
     naive = scheduled_for.replace(tzinfo=None) if scheduled_for.tzinfo else scheduled_for
     rec = NotificationLog(id=str(uuid.uuid4()), homework_id=hw_id, child_id=child_id,
@@ -123,7 +153,12 @@ def _upsert(s, kind: str, hw_id: str, child_id: str, scheduled_for: datetime) ->
 
 
 def schedule_for_homework(homework_id: str, now: datetime | None = None) -> list[dict]:
-    """Cria sugestao_inicial + 24h/2h + atraso (se vencido). Idempotente por key.
+    """Cria sugestao_inicial + 24h/2h (baseados no agendamento) + atraso (se vencido).
+
+    Lembretes 24h/2h usam scheduled_start (quando a tarefa será realizada),
+    nunca due_at. Sem scheduled_start, só sugestao_inicial (+ atraso se a
+    entrega já venceu) — os lembretes nascem no accept (agendamento).
+    Reagendamento atualiza os scheduled ainda pendentes (ver _upsert).
 
     Tarefa em status terminal: nada a agendar (retorna []).
     """
@@ -141,32 +176,35 @@ def schedule_for_homework(homework_id: str, now: datetime | None = None) -> list
     with session_scope() as s:
         r, _ = _upsert(s, "sugestao_inicial", homework_id, child_id, now)
         out.append(r)
-        due = _parse_due(rec.get("due_at"))
-        if due is not None:
+        base = _parse_scheduled(rec.get("scheduled_start"))
+        if base is not None:
             if settings.get("lembrete_24h", True):
-                sf = apply_quiet(due - timedelta(hours=24), settings["quiet_start"], settings["quiet_end"])
+                sf = apply_quiet(base - timedelta(hours=24), settings["quiet_start"], settings["quiet_end"])
                 r, _ = _upsert(s, "lembrete_24h", homework_id, child_id, sf)
                 out.append(r)
             if settings.get("lembrete_2h", True):
-                sf = apply_quiet(due - timedelta(hours=2), settings["quiet_start"], settings["quiet_end"])
+                sf = apply_quiet(base - timedelta(hours=2), settings["quiet_start"], settings["quiet_end"])
                 r, _ = _upsert(s, "lembrete_2h", homework_id, child_id, sf)
                 out.append(r)
-            if due < now and rec.get("status") not in TERMINAL_HW:
-                r, _ = _upsert(s, "atraso", homework_id, child_id, now)
-                out.append(r)
+        due = _parse_due(rec.get("due_at"))
+        if due is not None and due < now and rec.get("status") not in TERMINAL_HW:
+            r, _ = _upsert(s, "atraso", homework_id, child_id, now)
+            out.append(r)
     return out
 
 
 def _render(kind: str, hw: dict) -> str:
     subject = hw.get("subject") or "Tarefa"
     title = hw.get("title") or "sem título"
+    sched = hw.get("scheduled_start")
+    sched_txt = f"\nAgendado para: {str(sched)[:16].replace('T', ' ')}" if sched else ""
     if kind == "extracao_falhou":
         return ("⚠️ Não consegui ler a foto\n"
                 "Vou tentar de novo sozinho — ou abra a tarefa e preencha em Revisar dados.")
     if kind == "lembrete_24h":
-        return f"⏰ Falta 1 dia\n{subject} — \"{title}\"\n[✅ Concluir]"
+        return f"⏰ Falta 1 dia\n{subject} — \"{title}\"{sched_txt}\n[✅ Concluir]"
     if kind == "lembrete_2h":
-        return f"⚡ Em 2 horas\n{subject} — \"{title}\". Vai dar tempo? 💪\n[✅ Concluir]"
+        return f"⚡ Em 2 horas\n{subject} — \"{title}\"{sched_txt}. Vai dar tempo? 💪\n[✅ Concluir]"
     if kind == "atraso":
         return f"⚠️ Tarefa atrasada\n{subject} — \"{title}\".\n[✅ Concluir]"
     return f"📚 Nova tarefa detectada\n{subject} — \"{title}\""

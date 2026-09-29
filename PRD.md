@@ -310,10 +310,10 @@ Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK pr
 
 ### RF-10 — Notificações de Proximidade e de Atraso (M)
 
-**Descrição:** Enviar lembretes configuráveis: início do slot, 2h antes da entrega, 24h antes da entrega, e alerta de atraso.
+**Descrição:** Enviar lembretes configuráveis baseados no agendamento para realização: 24h e 2h antes do horário agendado (`scheduled_start`), 10 min antes do slot de execução, e alerta de atraso (vencimento).
 
 **Regras:**
-- Janelas padrão: **24h** e **2h** antes de `data_entrega`; 10 min antes do slot de execução.
+- Janelas padrão: **24h** e **2h** antes do **horário agendado para realização** (`scheduled_start`, definido no accept); sem agendamento, só a sugestão inicial (+ atraso se vencida). 10 min antes do slot de execução.
 - Deduplicação: nunca enviar o mesmo lembrete duas vezes (chave `task_id + tipo + offset`).
 - Respeitar janela de silêncio (ex.: 22h–07h) — lembretes noturnos são reagendados para o início do dia seguinte.
 
