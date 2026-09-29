@@ -19,9 +19,20 @@ function fmtDue(iso?: string | null) {
   return d.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
-function TaskCard({ t, onDone }: { t: TaskItem; onDone: (id: string) => void }) {
+function TaskCard({ t, onDone, onOpen }: { t: TaskItem; onDone: (id: string) => void; onOpen: (id: string) => void }) {
   return (
-    <div className="task">
+    <div
+      className="task" style={{ cursor: "pointer" }} role="link" tabIndex={0}
+      onClick={(e) => {
+        if ((e.target as HTMLElement).closest("button,a")) return;
+        onOpen(t.id);
+      }}
+      onKeyDown={(e) => {
+        if ((e.target as HTMLElement).closest("button,a")) return;
+        if (e.key === "Enter") onOpen(t.id);
+      }}
+      aria-label={`Abrir tarefa: ${t.title || "Tarefa"}`}
+    >
       <div className="row">
         {t.subject && <span className="chip-mat">{t.subject}</span>}
         <span className={`pill pill-${t.status}`}>{t.status.replace("_", " ")}</span>
@@ -232,6 +243,10 @@ export default function DashboardPage() {
     router.push("/login");
   }
 
+  function openTask(id: string) {
+    router.push(`/tarefas?task=${id}`);
+  }
+
   return (
     <div className="layout">
       <Sidebar active="/" onLogout={logout} />
@@ -348,28 +363,36 @@ export default function DashboardPage() {
           <section className="card" aria-label="Próximas tarefas">
             <h2>Próximas tarefas</h2>
             {upcoming.length === 0 && <div className="empty">Nenhuma tarefa ativa. 🎉</div>}
-            {upcoming.map((t) => <TaskCard key={t.id} t={t} onDone={conclude} />)}
+            {upcoming.map((t) => <TaskCard key={t.id} t={t} onDone={conclude} onOpen={openTask} />)}
           </section>
           <section className="card" aria-label="Hoje">
             <h2>Hoje {today ? `(${today.date.split("-").reverse().slice(0, 2).join("/")})` : ""}</h2>
             {today && today.overdue.length > 0 && (
               <>
                 <h3 style={{ color: "var(--destructive)", fontSize: 14 }}>Atrasadas</h3>
-                {today.overdue.map((t) => <TaskCard key={t.id} t={t} onDone={conclude} />)}
+                {today.overdue.map((t) => <TaskCard key={t.id} t={t} onDone={conclude} onOpen={openTask} />)}
               </>
             )}
             <div className="timeline">
               {(today?.scheduled_today || []).map((t) => (
-                <div className="slot" key={`s-${t.id}`}>
+                <a
+                  className="slot" key={`s-${t.id}`} href={`/tarefas?task=${t.id}`}
+                  style={{ textDecoration: "none", color: "inherit", display: "block" }}
+                  aria-label={`Abrir tarefa: ${t.title || t.subject || "Tarefa"}`}
+                >
                   <div className="hour">{fmtDue(t.scheduled_start)}</div>
                   <div><strong>{t.subject}</strong> — {t.title}</div>
-                </div>
+                </a>
               ))}
               {(today?.due_today || []).filter((t) => !(today?.scheduled_today || []).some((s) => s.id === t.id)).map((t) => (
-                <div className="slot" key={t.id}>
+                <a
+                  className="slot" key={t.id} href={`/tarefas?task=${t.id}`}
+                  style={{ textDecoration: "none", color: "inherit", display: "block" }}
+                  aria-label={`Abrir tarefa: ${t.title || t.subject || "Tarefa"}`}
+                >
                   <div className="hour">{fmtDue(t.due_at)}</div>
                   <div><strong>{t.subject}</strong> — {t.title} <span className="muted">(vence hoje)</span></div>
-                </div>
+                </a>
               ))}
               {(today?.due_today || []).length === 0 && (today?.scheduled_today || []).length === 0 && (
                 <div className="empty">Nada agendado para hoje.</div>
