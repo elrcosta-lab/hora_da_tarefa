@@ -2,7 +2,7 @@
 
 SaaS que organiza a lição de casa dos filhos de ponta a ponta: o responsável envia a **foto da tarefa** (app web ou Telegram), a IA extrai matéria/prazo/enunciado, o motor sugere o melhor horário livre (grade + atividades + sono) e o bot lembra e cobra a conclusão.
 
-> **Status:** beta na VPS · **Versão docs:** 1.4 (2026-09-25) · **Docs:** [PRD](PRD.md) (produto) · [SPECS](SPECS.md) (técnica) · [Go-Live](docs/GO-LIVE.md) (runbook) · [Auditoria](AUDITORIA.md) (segurança) · [Telas](design/SCREENS.md) (Stitch)
+> **Status:** beta na VPS · **Versão docs:** 1.6 (2026-09-29) · **Docs:** [PRD](PRD.md) (produto) · [SPECS](SPECS.md) (técnica) · [Go-Live](docs/GO-LIVE.md) (runbook) · [Auditoria](AUDITORIA.md) (segurança) · [Telas](design/SCREENS.md) (Stitch)
 
 ## Stack
 
@@ -11,7 +11,7 @@ SaaS que organiza a lição de casa dos filhos de ponta a ponta: o responsável 
 | Frontend | Next.js 14 (App Router) + TypeScript + Tailwind + shadcn/ui |
 | Backend | Python 3.11 + FastAPI + SQLAlchemy 2 + Alembic |
 | Banco / fila / storage | PostgreSQL 16 + Redis 7 + MinIO (S3-compatível) |
-| IA | 100% via OpenRouter (`nex-agi/nex-n2.5-mini:free`) — nenhum modelo local (tier pago delistado em 2026-09-24, 404 No endpoints) |
+| IA | 100% via OpenRouter (`meta/muse-spark-1.3-contributor` — família nex delistada em 24-25/09/2026, 404 No endpoints) — nenhum modelo local |
 | Bot Telegram | Handlers próprios sobre `httpx` (sem aiogram); **polling** em produção (`RUN_MODE=polling`), webhook opcional pós-DNS |
 | Proxy | Caddy (TLS automático com domínio) |
 | Lembretes | Beat APScheduler dentro da API (tick 1/min + purge diário) |
@@ -29,7 +29,7 @@ SaaS que organiza a lição de casa dos filhos de ponta a ponta: o responsável 
 │   │   ├── services/  # vision_openrouter, scheduling, textnorm
 │   │   └── tasks/     # extract, routine, notify, users, admin, beat (persistência via SQLAlchemy)
 │   ├── alembic/versions/  # migrations 0001–0012 (0012: status da conta p/ aprovação RF-24)
-│   └── tests/         # 27 arquivos de teste, 154 testes (pytest)
+│   └── tests/         # 27 arquivos de teste, 160 testes (pytest)
 ├── ai/prompts/        # system prompt da extração
 ├── design/SCREENS.md  # telas de referência (Stitch)
 ├── docker-compose.yml # postgres + redis + minio + api + web + caddy
@@ -51,7 +51,7 @@ docker compose up -d --build
 ## Testes
 
 ```bash
-PYTHONPATH=backend python3 -m pytest backend/tests -q   # 154 testes, sem IA (mocks)
+PYTHONPATH=backend python3 -m pytest backend/tests -q   # 160 testes, sem IA (mocks)
 ```
 
 Integração IA live é manual/noturna (`OPENROUTER_API_KEY` + fixtures sem PII) — ver SPECS §9.2.

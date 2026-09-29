@@ -1,4 +1,4 @@
-# Runbook de Go-Live (beta) — Hora da Tarefa (v1.4, 2026-09-25)
+# Runbook de Go-Live (beta) — Hora da Tarefa (v1.6, 2026-09-29)
 
 > **Regra de ouro: nenhum segredo entra no git.** `OPENROUTER_API_KEY`,
 > `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `POSTGRES_PASSWORD`,
@@ -10,7 +10,7 @@
 
 - [ ] VPS com Docker Engine + plugin compose (este repo já subiu com `docker-ce`)
 - [ ] Domínio apontando para a VPS (ex.: `app.horadatarefa.com` + `api.horadatarefa.com`)
-- [ ] Conta OpenRouter + `OPENROUTER_API_KEY` (`sk-or-v1-...`) — modelo padrão `nex-agi/nex-n2.5-mini:free` (tier pago delistado em 2026-09-24; sem crédito obrigatório)
+- [ ] Conta OpenRouter + `OPENROUTER_API_KEY` (`sk-or-v1-...`) — modelo padrão `meta/muse-spark-1.3-contributor` (família nex delistada 24-25/09/2026, 404 No endpoints; sem crédito obrigatório)
 - [ ] Bot `@hora_da_tarefa_bot` (BotFather) — token e comandos **já configurados** (ver §1)
 
 ## 1. Telegram — status atual
@@ -101,6 +101,19 @@ curl -s -X POST http://localhost:8081/v1/admin/users/<user_id>/approve -H "Autho
 - **Compose respeita o `.env`:** `TELEGRAM_LIVE_SEND` e `OPENROUTER_MODEL` usam `${VAR:-default}` (sem valor fixo no YAML)
 - **Rollback:** sem git na VPS — reenvie via `rsync` a versão anterior do arquivo + `docker compose build -q api && docker compose up -d api`; migrations reversíveis (`docker compose exec api alembic -c /app/alembic.ini downgrade -1`)
 - **Backup:** volume `pgdata` (descubra o nome real com `docker volume ls | grep pgdata`): `docker run --rm -v <projeto>_pgdata:/data -v /opt/hora_da_tarefa/backup:/b ...`
+  Método provado em 2026-09-29 (rápido e sem downtime): `docker exec hora-da-tarefa-postgres-1 sh -c 'pg_dump -U hora hora_da_tarefa' > /tmp/pre-deploy.backup.sql`
+- **`.env` dessincronizado:** se `docker compose` reclamar de variável ausente (`ADMIN_PASSWORD ausente no .env`), o `.env` local está mais velho que o da VPS — complete a partir do ambiente do container em produção (nunca o inverso) e rode `docker compose config -q` para validar.
+- **Recuperação de versionamento (incidente real 2026-09-29):** se o `api` entrar em loop com `DuplicateTable` no `alembic upgrade head`, a tabela já foi criada fora do alembic (`init_db`/`create_all` com o modelo novo) e a versão travou para trás. Sintomas: `docker inspect` com `RestartCount` alto, log em `000X -> 000Y`. Roteiro (com backup prévio acima):
+  ```bash
+  # 1. conferir: versão travada + objeto já existe
+  docker exec hora-da-tarefa-postgres-1 psql -U hora -d hora_da_tarefa -t -c "SELECT version_num FROM alembic_version;"
+  # 2. carimbar como aplicada a migration cuja tabela/coluna já existe (ex.: 0009 cobre 0008+0009)
+  docker run --rm --network hora-da-tarefa_internal --env-file /tmp/alembic.env hora-da-tarefa-api alembic -c /app/alembic.ini stamp 0009
+  # 3. aplicar o restante (só DDL aditivo deve passar; confira o conteúdo das migrations pendentes antes)
+  docker run --rm --network hora-da-tarefa_internal --env-file /tmp/alembic.env hora-da-tarefa-api alembic -c /app/alembic.ini upgrade head
+  # 4. validar versão + contagens e reiniciar: docker restart hora-da-tarefa-api-1
+  ```
+  Atenção: a senha do `DATABASE_URL` é a configurada na API (o `POSTGRES_PASSWORD` do container postgres pode divergir — é ignorado com volume já inicializado). Nunca edite migration publicada; `stamp` só quando o objeto existir idêntico. Prevenção estrutural: `init_db()`/`create_all` só fora de prod (alembic é o único gestor de schema em prod).
 
 ## 6. Pendências conhecidas (não bloqueiam o beta)
 

@@ -1,9 +1,9 @@
 # SPECS — Hora da Tarefa (SDD)
 
 > Documento de Especificação Técnica (Spec-Driven Development).
-> Autor: subagente SPEC + OpenCode · Versão: 1.5 (modelo muse-spark + polling agenda extração) · Status: **Aprovada para o beta**
+> Autor: subagente SPEC + OpenCode · Versão: 1.6 (atraso em data-SP + KPI por vencimento) · Status: **Aprovada para o beta**
 > Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`meta/muse-spark-1.3-contributor`; nex delistado em 24-25/09/2026) + bot em polling.
-> Última atualização: 2026-09-25.
+> Última atualização: 2026-09-29.
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
 
 ---
@@ -634,7 +634,7 @@ Idempotência: dedupe por `update_id` em tabela/redis (TTL 24h); updates repetid
 | GET | `/notifications` | Histórico de notificações |
 | POST | `/homeworks/:id/reprocess` | Reenfileira extração IA |
 | PATCH | `/homeworks/:id` | Revisão humana (RF-06): edita subject/title/statement/due_at/estimated_minutes/priority; preencher críticos promove `baixa_confianca` → `ok`; 400 em dado inválido |
-| GET | `/homeworks/today` | Dashboard Hoje: `{date, due_today[], overdue[], scheduled_today[]}` (filtro `child_id`/`date` opcional, escopo por dono) |
+| GET | `/homeworks/today` | Dashboard Hoje: `{date, due_today[], overdue[], scheduled_today[]}` (filtro `child_id`/`date` opcional, escopo por dono). `date` e comparações em SP; `overdue` = `atrasada` + (`due_at` < hoje-SP e status `pendente\|agendada\|em_andamento`) |
 | GET | `/homeworks/export` | CSV UTF-8 (com BOM p/ Excel) com os mesmos filtros de `GET /homeworks` |
 | POST | `/admin/users/:id/approve` | Admin aprova conta `pending` → `approved` (RF-24); 404 se inexistente |
 | POST | `/admin/users/:id/reject` | Admin rejeita conta → `rejected` + revoga refresh tokens (RF-24); 409 se alvo é admin |
@@ -771,6 +771,12 @@ qualquer      --arquivar-->       arquivada        (após concluida/nao_realizad
 ```
 
 Transições fora da matriz → `409 STATUS_CONFLICT`. Transição para `atrasada` é feita por job agendado; não sobrescreve `concluida`.
+
+**Regra de data do atraso (bug 2026-09-29):** toda comparação de vencimento usa **data em `America/Sao_Paulo`** (`_sp_day`/`_sp_iso` em `app/tasks/extract.py`).
+O Postgres devolve `timestamptz` em UTC — sem converter, entrega `28/09 23:59 SP` vira `29/09 02:59 UTC` e o atraso só aparece um dia depois.
+`_to_dict` emite `due_at`/`scheduled_*` sempre em ISO-SP. `mark_overdue` (escopo `pendente|agendada`) e `today_overview`
+comparam `YYYY-MM-DD` em SP. `overdue` do `today` inclui `status == atrasada` **ou** (`due_at` < hoje-SP e status em
+`pendente|agendada|em_andamento`). O KPI do dashboard conta pelo **vencimento real** (mesma regra), sem depender do beat já ter marcado.
 
 ### 4.7 Estimativa de duração (heurística inicial)
 

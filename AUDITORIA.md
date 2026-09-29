@@ -1,4 +1,6 @@
-# Auditoria de Segurança — Hora da Tarefa (VPS, 3ª rodada + adendo v1.4)
+# Auditoria de Segurança — Hora da Tarefa (VPS, 3ª rodada + adendos v1.4/v1.6)
+
+- Adendo 2026-09-29 (v1.6, sem nova rodada): (a) bug funcional de fuso corrigido — atraso agora compara data em SP (`_sp_day`/`_sp_iso`) e o KPI conta pelo vencimento real (SPECS §4.6; sem impacto de segurança); (b) incidente operacional na VPS local resolvido sem perda — `api` em loop por `DuplicateTable` (`init_db`/`create_all` × alembic, versão travada em `0007` com tabela já existente), sanado com backup + `stamp 0009` + `upgrade head` (`0010–0012` aditivas; runbook em `docs/GO-LIVE.md` §5) — reforça nunca expor `POSTGRES_PASSWORD` divergente e manter alembic como único gestor de schema em prod; (c) docs sincronizadas (modelo `muse-spark`, 160 testes). Nenhum achado novo de segurança.
 
 - Adendo 2026-09-25 (v1.4, sem nova rodada): achados A1–A4 e O1 da 3ª rodada já estão **corrigidos e verificados em produção** (tabela "Status pós-correção" acima: teto+threadpool no import, `concluir` escopado ao dono, `S3_ACCESS_KEY` rotacionada, paginação SQL, compose respeita `.env`). Nenhum achado novo; este arquivo segue como registro point-in-time da 3ª rodada. Aprovação de contas renumerada RF-16 → **RF-24** nos docs (RF-16 volta a ser calendário semanal no PRD); modelo padrão confirmado `:free` (pago delistado 2026-09-24).
 

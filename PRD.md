@@ -326,6 +326,7 @@ Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK pr
 
 **Critérios de aceite:**
 - Carregar em ≤ 2s com até 200 tarefas ativas.
+- Atrasadas contam pelo **vencimento real** (data de entrega em SP anterior a hoje + status ativo), mesmo antes do beat marcar `atrasada`; pendentes/agendadas descontam as vencidas (sem dupla contagem).
 
 ### RF-12 — Filtros, Busca e Histórico (S)
 
@@ -656,6 +657,7 @@ sequenceDiagram
 | 1.3 | 2026-09-23 | OpenCode | Aprovação de contas (então chamada RF-16): conta nova pendente até aprovação do admin (login/vínculo/bot bloqueados; backfill de contas existentes) |
 | 1.4 | 2026-09-25 | OpenCode | Modelo `:free` como padrão (pago delistado 2026-09-24); aprovação renumerada para **RF-24** (RF-16 volta a ser calendário semanal); beat via outbox no polling, import com teto+threadpool, bot com id curto, paginação SQL, compose respeita `.env`, testes 154/migrations 0012 |
 | 1.5 | 2026-09-25 | OpenCode | Troca para `meta/muse-spark-1.3-contributor` (família nex delistada 24-25/09; validado na foto real; requer 18+ e ajuste de privacidade na conta OpenRouter); polling agenda extração em thread |
+| 1.6 | 2026-09-29 | OpenCode | Atraso em data-SP (fuso corrigido no beat/`today`/API) + KPI de atrasadas pelo vencimento real; runbook de recuperação de versionamento (stamp) |
 
 ---
 
