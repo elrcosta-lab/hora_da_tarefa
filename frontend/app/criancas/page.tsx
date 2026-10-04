@@ -115,7 +115,20 @@ export default function CriancasPage() {
   async function copyCode() {
     if (!shownCode) return;
     try {
-      await navigator.clipboard.writeText(shownCode);
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shownCode);
+      } else {
+        // fallback p/ HTTP sem secure context (clipboard API indisponível)
+        const ta = document.createElement("textarea");
+        ta.value = shownCode;
+        ta.style.position = "fixed";
+        ta.style.opacity = "0";
+        document.body.appendChild(ta);
+        ta.select();
+        const ok = document.execCommand("copy");
+        document.body.removeChild(ta);
+        if (!ok) throw new Error("copy failed");
+      }
       setMsg("Código copiado! 📋");
     } catch {
       setMsg("Não consegui copiar — anote o código da tela.");
