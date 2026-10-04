@@ -143,9 +143,11 @@ def _render_dedupe(rec: dict) -> str:
         return f"Essa foto já foi registrada ({subject} — {title}). Ainda analisando… ⏳"
     due = rec.get("due_at") or "a confirmar"
     sched = rec.get("scheduled_start")
-    extra = f"\nAgendada para: {sched[:16].replace('T', ' ')}" if sched else ""
+    from app.tasks.notify import br_date, br_datetime
+    due_txt = br_date(due) or str(due)[:10]
+    extra = f"\nAgendada para: {br_datetime(sched) or str(sched)[:16]}" if sched else ""
     return (f"Essa foto já está registrada:\n{subject} — {title}\n"
-            f"Status: {status} · Entrega: {str(due)[:10]}{extra}\n"
+            f"Status: {status} · Entrega: {due_txt}{extra}\n"
             f"Concluiu? /concluir {rec['homework_id'][:8]}")
 
 

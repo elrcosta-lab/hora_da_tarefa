@@ -226,3 +226,33 @@ def test_dispatch_skips_concluded_homework():
     assert remaining == []
     # e nada novo deve ser agendado p/ tarefa terminal
     assert N.schedule_for_homework(hid) == []
+
+
+def test_render_uses_brazilian_datetime():
+    """Alerta mostra DD/MM HH:MM (SP), nunca ISO."""
+    from app.tasks import notify as N
+
+    hw = {"subject": "Inglês", "title": "Must Mustn't página 111",
+          "scheduled_start": "2026-10-05T08:00:00-03:00"}
+    text = N._render("lembrete_24h", hw)
+    assert "Agendado para: 05/10 08:00" in text
+    assert "2026-10-05" not in text
+    # datetime naive (sqlite) assume SP
+    hw2 = dict(hw, scheduled_start="2026-10-05T08:00:00")
+    assert "05/10 08:00" in N._render("lembrete_2h", hw2)
+    # inválido não quebra o envio (fallback cru)
+    hw3 = dict(hw, scheduled_start="quando der")
+    assert "Agendado para: quando der" in N._render("lembrete_24h", hw3)
+    # sem agendamento: sem linha
+    hw4 = dict(hw, scheduled_start=None)
+    assert "Agendado para" not in N._render("lembrete_24h", hw4)
+
+
+def test_br_date_formats_due_day():
+    from app.tasks.notify import br_date, br_datetime
+
+    assert br_date("2026-10-05T23:59:00-03:00") == "05/10"
+    assert br_date("2026-10-05") == "05/10"
+    assert br_date(None) is None
+    assert br_date("a confirmar") is None
+    assert br_datetime(None) is None

@@ -193,11 +193,35 @@ def schedule_for_homework(homework_id: str, now: datetime | None = None) -> list
     return out
 
 
+def br_datetime(value) -> str | None:
+    """Formato brasileiro DD/MM HH:MM (America/Sao_Paulo). None se inválido. Nunca levanta."""
+    try:
+        if value is None:
+            return None
+        dt = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).strip())
+        dt = as_aware(dt, TZ).astimezone(TZ)
+        return f"{dt.day:02d}/{dt.month:02d} {dt.hour:02d}:{dt.minute:02d}"
+    except Exception:
+        return None
+
+
+def br_date(value) -> str | None:
+    """Formato brasileiro DD/MM (America/Sao_Paulo). None se inválido. Nunca levanta."""
+    try:
+        if value is None:
+            return None
+        dt = value if isinstance(value, datetime) else datetime.fromisoformat(str(value).strip())
+        dt = as_aware(dt, TZ).astimezone(TZ)
+        return f"{dt.day:02d}/{dt.month:02d}"
+    except Exception:
+        return None
+
+
 def _render(kind: str, hw: dict) -> str:
     subject = hw.get("subject") or "Tarefa"
     title = hw.get("title") or "sem título"
     sched = hw.get("scheduled_start")
-    sched_txt = f"\nAgendado para: {str(sched)[:16].replace('T', ' ')}" if sched else ""
+    sched_txt = f"\nAgendado para: {br_datetime(sched) or str(sched)[:16]}" if sched else ""
     if kind == "extracao_falhou":
         return ("⚠️ Não consegui ler a foto\n"
                 "Vou tentar de novo sozinho — ou abra a tarefa e preencha em Revisar dados.")
