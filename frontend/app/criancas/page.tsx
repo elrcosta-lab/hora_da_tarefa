@@ -87,8 +87,8 @@ export default function CriancasPage() {
     setMsg(null);
     try {
       const body = await api<{ code: string }>(`/children/${childId}/access-code`, { method: "POST", body: "{}" });
+      await loadAccess(childId); // atualiza status; limpa código antigo (o novo é exibido abaixo)
       setShownCode(body.code);
-      await loadAccess(childId);
       setMsg("Código gerado! Anote agora — ele não será exibido de novo. 🔑");
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Falha ao gerar código.");
