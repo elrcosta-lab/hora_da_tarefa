@@ -1,7 +1,7 @@
 # SPECS — Hora da Tarefa (SDD)
 
 > Documento de Especificação Técnica (Spec-Driven Development).
-> Autor: subagente SPEC + OpenCode · Versão: 1.6 (atraso em data-SP + KPI por vencimento) · Status: **Aprovada para o beta**
+> Autor: subagente SPEC + OpenCode · Versão: 1.8 (RF-25 + fixes UX + auditoria A5–A7) · Status: **Aprovada para o beta**
 > Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`meta/muse-spark-1.3-contributor`; nex delistado em 24-25/09/2026) + bot em polling.
 > Última atualização: 2026-09-29.
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
@@ -1540,3 +1540,5 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 > v1.7 (2026-10-04): **RF-25** — acesso da criança por código (tabela `child_access`, migração `0013`); JWT `type="child_access"` + `get_current_child_id()`; `POST /v1/auth/child/login` (5/min + lockout), `GET /v1/child/me|homeworks` (read-only), gestão do código em `/v1/children/:id/access-code`; frontend `/crianca` + `/crianca/tarefas` (`.child-*`, token `hdt.child.access`); testes 182 (28 arquivos).
 >
 > Correções pós-auditoria 4ª rodada: **A5** — `code_lookup` HMAC-SHA256 indexado (migração `0014`, login O(1) + fallback legado); **A6** — TTL da sessão criança 720→120 min + expiração client-side; **A7** — lockout só p/ código bem-formado + reset em sucesso.
+>
+> v1.8 (2026-10-04): RF-25 fixes de UX (código exibido após gerar; fallback de cópia sem clipboard API p/ HTTP; `/crianca/tarefas` oculta `concluída` — só apresentação, API inalterada); auditoria 4ª rodada com A5–A7 verificados; deploy VPS com `0013`–`0014`; testes 182 (28 arquivos).

@@ -1,4 +1,4 @@
-# Runbook de Go-Live (beta) — Hora da Tarefa (v1.7, 2026-10-04)
+# Runbook de Go-Live (beta) — Hora da Tarefa (v1.8, 2026-10-04)
 
 > **Regra de ouro: nenhum segredo entra no git.** `OPENROUTER_API_KEY`,
 > `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `POSTGRES_PASSWORD`,
@@ -84,7 +84,7 @@ docker compose ps                    # todos healthy
 docker compose logs api | grep -i alembic   # 0001→0014 aplicadas (0013 child_access, 0014 lookup HMAC)
 ```
 
-Roteiro funcional (navegador + Telegram): registro com consentimento → **aprovação do admin (abaixo, RF-24)** → onboarding (filho → grade → código) → `/start <código>` → foto → revisão → agendar → `/hoje` → concluir (bot aceita id curto de 8 chars) → CSV em Tarefas → **área da criança (RF-25)**: gerar código em Crianças → entrar em `/crianca` → ver `/crianca/tarefas` → Sair → revogar e confirmar bloqueio.
+Roteiro funcional (navegador + Telegram): registro com consentimento → **aprovação do admin (abaixo, RF-24)** → onboarding (filho → grade → código) → `/start <código>` → foto → revisão → agendar → `/hoje` → concluir (bot aceita id curto de 8 chars) → CSV em Tarefas → **área da criança (RF-25)**: gerar código em Crianças (exibido 1 vez + Copiar) → entrar em `/crianca` → ver `/crianca/tarefas` (concluídas ocultas) → Sair → revogar e confirmar bloqueio.
 
 **Aprovar/rejeitar contas (RF-24):** sem UI de admin no beta — via API com token do admin:
 ```bash

@@ -2,7 +2,7 @@
 
 - Data: 2026-10-04
 - Stack detectada: Next.js 14 (App Router) + FastAPI + SQLAlchemy 2 + Postgres 16 + Redis 7 + MinIO (S3) + JWT HS256 (`access`/`refresh`/`child_access`) + Argon2id + bot Telegram próprio sobre httpx (polling) + OpenRouter (`meta/muse-spark-1.3-contributor`)
-- Escopo: delta RF-25 desde a 3ª rodada (`backend/app/{api/child.py,api/auth.py,api/children.py,tasks/child_access.py,core/security.py,core/ratelimit.py,core/config.py,models/child.py,alembic/versions/0013_child_access.py,tests/test_child_access.py}`, `frontend/{lib/child-api.ts,app/crianca/,app/criancas/page.tsx,app/globals.css}`, `PRD.md` v1.7, `SPECS.md` §2.14/§3.12/§10.5) + regressão dos fixes A1–A4/O1 + re-varredura V1–V6 no repo local e compose dev. **VPS fora do escopo desta rodada** (sem acesso SSH): estado de produção segue o da 3ª rodada; o código RF-25 ainda não foi para a VPS (deploy via rsync pendente — ver O13). Somente leitura; nada foi modificado.
+- Escopo: delta RF-25 desde a 3ª rodada (`backend/app/{api/child.py,api/auth.py,api/children.py,tasks/child_access.py,core/security.py,core/ratelimit.py,core/config.py,models/child.py,alembic/versions/0013_child_access.py,tests/test_child_access.py}`, `frontend/{lib/child-api.ts,app/crianca/,app/criancas/page.tsx,app/globals.css}`, `PRD.md` v1.7, `SPECS.md` §2.14/§3.12/§10.5) + regressão dos fixes A1–A4/O1 + re-varredura V1–V6 no repo local e compose dev. **VPS fora do escopo desta rodada** (sem acesso SSH): estado de produção segue o da 3ª rodada; o deploy da RF-25 na VPS ocorreu após a rodada (ver O13 atualizada e adendo v1.8 abaixo). Somente leitura; nada foi modificado.
 
 ## Resumo executivo (4ª rodada)
 
@@ -20,7 +20,7 @@
 | Item | Status | Evidência |
 |---|---|---|
 | A5 login O(n) Argon2 | ✅ corrigido | `code_lookup` HMAC-SHA256 indexado (`models/child.py`, migração `0014` aplicada no Postgres do compose, índice `ix_child_access_code_lookup`); `login_by_code` O(1) + fallback só p/ linhas legadas (`tasks/child_access.py`); 2 testes novos (`test_code_lookup_is_hmac_not_plaintext`, `test_legacy_row_without_lookup_still_logs_in`) |
-| A6 sessão 12h em aparelho compartilhado | ✅ corrigido | `CHILD_TOKEN_EXPIRE_MINUTES` 720→120 (`core/config.py:37`, `.env.example`); expiração respeitada no cliente (`hdt.child.exp` em `lib/child-api.ts:5-22`); `expires_in=7200` coberto em teste; smoke E2E confirma |
+| A6 sessão 12h em aparelho compartilhado | ✅ corrigido | `CHILD_TOKEN_EXPIRE_MINUTES` 720→120 (`core/config.py:37`, `.env.example`); expiração respeitada no cliente (`hdt.child.exp` em `lib/child-api.ts:5-25`); `expires_in=7200` coberto em teste; smoke E2E confirma |
 | A7 lockout sem reset / conta formato inválido | ✅ corrigido | formato inválido → 400 sem contar (`api/auth.py:126-127`); `clear_child_login_failures()` em sucesso (`core/ratelimit.py:139`, `api/auth.py:132`); 2 testes novos (malformado não conta; 9+acerto+9 não trava) |
 | Regressão | ✅ sem regressão | 63/63 em child/auth/ratelimit/routine/approval/admin/bot/FSM; suíte total 182 coletados, falhas só as ambientais pré-existentes (comprovadas em código pristino); `tsc` + build web OK; `/crianca` 200 |
 
@@ -48,7 +48,7 @@
   #           if row and verify_child_code(code, row.code_hash): ...
   ```
 
-### [A6] Sessão da criança longa (12h) em `localStorage` de dispositivo compartilhado — backend/app/core/config.py:37 + frontend/lib/child-api.ts:5-17
+### [A6] Sessão da criança longa (12h) em `localStorage` de dispositivo compartilhado — backend/app/core/config.py:37 + frontend/lib/child-api.ts:5-25
 - **Severidade:** Baixa
 - **Evidência:**
   ```python
@@ -109,9 +109,10 @@
 - **O10 — Burst 5/min conta sucessos:** `limit(5, 60, key="ip")` (`auth.py:116`) soma logins válidos e inválidos por IP; casa com 2+ crianças digitando junto + 1 erro cada já toma 429 legítimo. Robustez/UX, não vulnerabilidade — avaliar `key` por código normalizado além do IP.
 - **O11 — Oráculo de timing desprezível:** `login_by_code` retorna cedo no match e varre tudo no miss; sob rate limit + lockout não há orçamento para explorar a diferença. Sem ação (some se A5 for corrigido com lookup O(1)).
 - **O12 — Higiene menor do `child_access`:** `last_login_at` não reseta ao regenerar e o hash do código revogado permanece no banco — inofensivo (Argon2id), sem PII. Sem ação obrigatória.
-- **O13 — RF-25 ainda fora da VPS:** o deploy é via rsync (sem clone git lá); ao subir, `upgrade head` aplica a `0013` (aditiva, sem backfill/stamp). Validado localmente: `0012 → 0013` no Postgres do compose + smoke E2E (register→approve→código→login→tarefas→isolamento→revogação).
+- **O13 — RF-25 em produção (atualizado pós-deploy 2026-10-04):** deploy via rsync + rebuild concluído na VPS (backup prévio, `0012→0013→0014` aplicadas no boot, `/crianca` 200, smoke read-only OK). O runbook do deploy está em `docs/GO-LIVE.md` §4 (bloco RF-25).
 - **O14 — 3ª rodada segue válida p/ a VPS:** O2 (sem TLS), O3 (LGPD/transbordo), O5–O9 não foram re-verificados por falta de acesso SSH — nada no delta RF-25 os altera.
 - **O15 — `GET /docs` aberto localmente é esperado** (`ENV=dev` aqui; prod mantém `docs_url=None` — A6 da 2ª rodada intacto em `main.py:59`).
+- **Adendo v1.8 (2026-10-04, sem nova rodada):** 3 fixes web pós-4ª rodada, todos sem impacto de segurança — (a) código da criança agora exibido após gerar (reordenação `loadAccess`→`setShownCode`; o código já transitava na resposta `201`, nenhuma exposição nova); (b) fallback de cópia sem clipboard API p/ HTTP (textarea temporária no próprio DOM, mesmo contexto de origem); (c) `/crianca/tarefas` oculta `concluída` (filtro só-apresentação no cliente; API e autorização inalteradas). Nenhum achado novo.
 
 ## Pontos verificados sem achados (4ª rodada)
 

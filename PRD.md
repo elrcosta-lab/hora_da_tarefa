@@ -1,7 +1,7 @@
 # PRD — Hora da Tarefa
 
 > **Status:** Beta (VPS)
-> **Versão:** 1.7 (RF-25 acesso da criança por código)
+> **Versão:** 1.8 (RF-25 fixes: exibir código, fallback de cópia, ocultar concluídas)
 > **Última atualização:** 2026-10-04
 > **Responsável:** Product Owner (a definir)
 > **Classificação:** Documento de requisitos de produto (PRD)
@@ -385,7 +385,7 @@ Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK pr
 - **Escopo de dados:** todas as tarefas da criança dona do código (`subject`, `title`, `statement`, `due_at`, `status`, `scheduled_start/end`). **Somente visualizar** — sem concluir, agendar, editar ou excluir. A página oculta as `concluída` para focar no que ainda falta.
 - **Token:** JWT isolado `type="child_access"`, `sub=child_id`, TTL 2h, sem acesso a rotas do responsável (e vice-versa). Revogação rechecada no banco a cada request.
 - **Rate limit estrito** no login por código (5/min por IP + lockout de 10 falhas/15 min — só código bem-formado conta; sucesso zera o contador), resposta genérica sem oráculo.
-- **UI:** `/crianca` (login de 1 campo) e `/crianca/tarefas` (cards grandes, emojis, cores), **mobile-first**, **sem sidebar**, botão **Sair**.
+- **UI:** `/crianca` (login de 1 campo) e `/crianca/tarefas` (cards grandes, emojis, cores), **mobile-first**, **sem sidebar**, botão **Sair**. Em `/criancas`, o código gerado é exibido uma única vez com botão **Copiar** (com fallback p/ HTTP sem clipboard API).
 
 **Critérios de aceite:**
 - Gerar código com responsável `approved` retorna 8 chars válidos; `GET` nunca devolve o código.
@@ -691,6 +691,7 @@ sequenceDiagram
 | 1.5 | 2026-09-25 | OpenCode | Troca para `meta/muse-spark-1.3-contributor` (família nex delistada 24-25/09; validado na foto real; requer 18+ e ajuste de privacidade na conta OpenRouter); polling agenda extração em thread |
 | 1.6 | 2026-09-29 | OpenCode | Atraso em data-SP (fuso corrigido no beat/`today`/API) + KPI de atrasadas pelo vencimento real; runbook de recuperação de versionamento (stamp) |
 | 1.7 | 2026-10-04 | OpenCode | RF-25: acesso da criança por código de 8 chars Crockford (~40 bits, Argon2id, revogável) em `/crianca`, visualização somente leitura de todas as tarefas, token JWT isolado `type="child_access"` (sessão 2h), rate limit estrito; persona/jornada de Miguel atualizadas; correções pós-auditoria (lookup HMAC O(1), TTL 120 min, lockout justo) |
+| 1.8 | 2026-10-04 | OpenCode | RF-25 fixes de UX: código exibido após gerar (ordem `loadAccess`→`setShownCode`), fallback de cópia sem clipboard API (HTTP), `/crianca/tarefas` oculta `concluída`; auditoria 4ª rodada com A5–A7 corrigidos; deploy VPS (migrações `0013`–`0014`) |
 
 ---
 
