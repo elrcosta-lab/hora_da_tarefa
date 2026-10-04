@@ -32,7 +32,6 @@ export default function CriancaTarefasPage() {
   const router = useRouter();
   const [me, setMe] = useState<ChildMe | null>(null);
   const [items, setItems] = useState<Item[]>([]);
-  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,7 +50,6 @@ export default function CriancaTarefasPage() {
       ]);
       setMe(m);
       setItems(res.items);
-      setTotal(res.total);
     } catch (err) {
       if (err instanceof ChildApiError && err.code === "UNAUTHORIZED") {
         logout();
@@ -70,6 +68,9 @@ export default function CriancaTarefasPage() {
     }
     load();
   }, [load, router]);
+
+  // Concluídas ficam ocultas: foco no que ainda falta fazer.
+  const visible = items.filter((t) => t.status !== "concluida");
 
   return (
     <main className="child-wrap">
@@ -98,7 +99,7 @@ export default function CriancaTarefasPage() {
         </div>
       )}
 
-      {!loading && !error && items.length === 0 && (
+      {!loading && !error && visible.length === 0 && (
         <div className="card child-empty" role="status">
           <p className="child-empty-emoji" aria-hidden>🎉</p>
           <p><strong>Nenhuma tarefa no momento!</strong></p>
@@ -106,13 +107,13 @@ export default function CriancaTarefasPage() {
         </div>
       )}
 
-      {!loading && !error && items.length > 0 && (
+      {!loading && !error && visible.length > 0 && (
         <>
           <p className="muted" role="status">
-            {total} {total === 1 ? "tarefa" : "tarefas"} para você 📚
+            {visible.length} {visible.length === 1 ? "tarefa" : "tarefas"} para você 📚
           </p>
           <ul className="child-list">
-            {items.map((t) => (
+            {visible.map((t) => (
               <li className="card child-task" key={t.id}>
                 <div className="row">
                   <span aria-hidden>{STATUS_EMOJI[t.status] || "📌"}</span>

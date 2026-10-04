@@ -382,7 +382,7 @@ Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK pr
 **Regras:**
 - **Código:** 8 caracteres Crockford base32 (ex.: `K7M2-P9QT`, ~40 bits), gerado pelo responsável em `/criancas`, persistente e revogável; armazenado **somente como hash Argon2id** (nunca em claro, nunca em log). Comparação *case-insensitive* e insensível a hífen.
 - **Geração exige responsável `approved`** (RF-24): conta `pending`/`rejected` não gera código.
-- **Escopo de dados:** todas as tarefas da criança dona do código (`subject`, `title`, `statement`, `due_at`, `status`, `scheduled_start/end`). **Somente visualizar** — sem concluir, agendar, editar ou excluir.
+- **Escopo de dados:** todas as tarefas da criança dona do código (`subject`, `title`, `statement`, `due_at`, `status`, `scheduled_start/end`). **Somente visualizar** — sem concluir, agendar, editar ou excluir. A página oculta as `concluída` para focar no que ainda falta.
 - **Token:** JWT isolado `type="child_access"`, `sub=child_id`, TTL 2h, sem acesso a rotas do responsável (e vice-versa). Revogação rechecada no banco a cada request.
 - **Rate limit estrito** no login por código (5/min por IP + lockout de 10 falhas/15 min — só código bem-formado conta; sucesso zera o contador), resposta genérica sem oráculo.
 - **UI:** `/crianca` (login de 1 campo) e `/crianca/tarefas` (cards grandes, emojis, cores), **mobile-first**, **sem sidebar**, botão **Sair**.

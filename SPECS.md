@@ -667,7 +667,7 @@ genérico (anti-oráculo); código nunca em claro fora da resposta de geração,
 |---|---|---|
 | POST | `/auth/child/login` | `{code}` → `{access_token, expires_in (7200 s), child:{id,name,grade_level}}`; TTL 2h sem refresh (expiração respeitada no cliente); 5/min por IP + lockout de 10 falhas/15 min (só código bem-formado conta; sucesso zera; 429 + `Retry-After`); formato inválido → 400 sem contar falha |
 | GET | `/child/me` | `{id, name, grade_level}` (sem PII além de nome/série) |
-| GET | `/child/homeworks` | Todas as tarefas da criança (`subject/title/statement/due_at/status/scheduled_start/end/estimated_minutes/priority`); filtros `status/subject/q/sort/page/page_size`; read-only |
+| GET | `/child/homeworks` | Todas as tarefas da criança (`subject/title/statement/due_at/status/scheduled_start/end/estimated_minutes/priority`); filtros `status/subject/q/sort/page/page_size`; read-only; a UI infantil (`/crianca/tarefas`) oculta `concluida` p/ focar no que falta |
 | POST | `/children/:id/access-code` | Dono gera/regenera (201, código retornado **uma vez**); 403 cross-account, 404 sem criança |
 | GET | `/children/:id/access-code` | Metadados (`active/revoked/last_login_at/...`); nunca o código |
 | DELETE | `/children/:id/access-code` | Revoga (invalida login e tokens emitidos); 404 `CHILD_ACCESS_NOT_FOUND` sem credencial |
