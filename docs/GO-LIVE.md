@@ -63,6 +63,8 @@ Teste: gere um código em Configurações → envie `/start <código>` no bot �
 ## 4. Deploy e verificação
 
 > A VPS **não tem clone git** — o sync é via `rsync` (só arquivos, nunca o `.env`).
+> Um arquivo por comando (vários fontes num só `rsync` achatam os paths no destino —
+> incidente real 2026-10-04: `notify.py`/`handlers.py` pararam em `backend/app/`).
 
 ```bash
 export SSH_KEY="$HOME/.ssh/<chave-vps>" VPS="root@<ip-vps>"
