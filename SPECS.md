@@ -93,8 +93,8 @@ hora_da_tarefa/
 │  │  ├─ services/      # scheduling.py, vision_openrouter.py, notify.py
 │  │  ├─ tasks/         # extract, routine, notify, users, admin, beat (persistência SQLAlchemy, sem broker)
 │  │  └─ bot/           # handlers + polling + telegram_api (httpx, sem aiogram)
-│  ├─ alembic/          # versions 0001–0012 (0012: status da conta p/ RF-24)
-│  └─ tests/            # 27 arquivos de teste, 154 testes (pytest, mocks; IA live manual)
+│  ├─ alembic/          # versions 0001–0014 (0014: lookup O(1) do código da criança)
+│  └─ tests/            # 28 arquivos de teste, 182 testes (pytest, mocks; IA live manual)
 ├─ ai/prompts           # system prompt da extração (nex_system)
 └─ docs/GO-LIVE.md      # runbook de deploy (rsync + compose, sem git na VPS)
 ```
@@ -152,7 +152,7 @@ flowchart LR
 - Fuso: armazenar `timestamptz` (UTC); timezone do usuário em `user.timezone` (default `America/Sao_Paulo`).
 - Enums nativos do Postgres.
 - Dados de menor: ver §10 (LGPD) — nenhum dado sensível do menor além do necessário.
-- **Persistência ativa (F0, 2026-09-22):** stores in-memory removidos; `app/tasks/*` operam via SQLAlchemy (`app/core/db.py`, sessão curta por operação, retorno em dicts) sobre **Postgres 16** (prod/compose) ou **sqlite** (dev/testes via `DATABASE_URL`). Alembic `0001–0012`: núcleo (`0001`), notificações (`0002`), `app_user` + vínculo Telegram (`0003`), escopo por dono (`0004`), consentimento LGPD (`0005`), refresh tokens (`0006–0007`), disponibilidade do responsável (`0008–0009`), expiração do código de vínculo (`0010`), papel admin (`0011`), status da conta p/ aprovação RF-24 (`0012`, backfill `approved`). Imagens via `StorageProvider` (`app/core/storage.py`: `local` em dev/testes, `s3`/MinIO no compose com `STORAGE_BACKEND=s3`); `homework_image` persiste metadados + `expires_at` (retenção RNF-09/11 via `purge_expired_images`).
+- **Persistência ativa (F0, 2026-09-22):** stores in-memory removidos; `app/tasks/*` operam via SQLAlchemy (`app/core/db.py`, sessão curta por operação, retorno em dicts) sobre **Postgres 16** (prod/compose) ou **sqlite** (dev/testes via `DATABASE_URL`). Alembic `0001–0014`: núcleo (`0001`), notificações (`0002`), `app_user` + vínculo Telegram (`0003`), escopo por dono (`0004`), consentimento LGPD (`0005`), refresh tokens (`0006–0007`), disponibilidade do responsável (`0008–0009`), expiração do código de vínculo (`0010`), papel admin (`0011`), status da conta p/ aprovação RF-24 (`0012`, backfill `approved`), acesso da criança p/ RF-25 (`0013`, `child_access`; `0014`, `code_lookup` HMAC p/ busca O(1)). Imagens via `StorageProvider` (`app/core/storage.py`: `local` em dev/testes, `s3`/MinIO no compose com `STORAGE_BACKEND=s3`); `homework_image` persiste metadados + `expires_at` (retenção RNF-09/11 via `purge_expired_images`).
 
 ### 2.2 Enums
 
@@ -213,7 +213,7 @@ CREATE TYPE notification_status AS ENUM ('scheduled','sent','failed','cancelled'
 | created_at / updated_at | timestamptz | NOT NULL | |
 | deleted_at | timestamptz | NULL | |
 
-> Não há PII além de nome/data; nenhuma credencial do menor. `child` pertence ao `user` via `guardian`.
+> Não há PII além de nome/data. O `child` **não possui credencial de identidade** (sem e-mail, senha ou conta própria). O **código de acesso (RF-25)** é um **segredo operacional** de visualização somente leitura — sem PII, vinculado ao `child_id`, gerado/revogável pelo responsável e armazenado apenas como hash Argon2id (`child_access`, §2.14). `child` pertence ao `user` via `guardian`.
 
 ### 2.6 `school_schedule` (grade semanal recorrente)
 
@@ -337,11 +337,26 @@ user 1─* guardian *─1 child
 child 1─* school_schedule
 child 1─* activity
 child 1─* homework
+child 1─1 child_access (RF-25)
 homework 1─* homework_image
 homework 1─* suggestion_slot
 homework 1─* notification_log
 user 1─* notification_log
 ```
+
+### 2.14 `child_access` (RF-25, migrações `0013`–`0014`)
+
+Credencial de acesso da criança: código de 8 chars Crockford base32 (`32^8 ≈ 2^40`),
+persistente e revogável, persistido **somente como hash Argon2id**. Sem PII nova.
+
+| Coluna | Tipo | Restrições | Descrição |
+|---|---|---|---|
+| child_id | uuid | PK, FK `child.id` ON DELETE CASCADE | 1 credencial por criança |
+| code_hash | text | NOT NULL | Argon2id do código normalizado |
+| code_lookup | string(64) | NOT NULL, indexado | HMAC-SHA256 do código (pepper = `JWT_SECRET`) p/ busca O(1) — não revela o código; auth segue no Argon2id (A5, migração `0014`; linhas legadas `""` usam varredura restrita) |
+| revoked | bool | NOT NULL default false | `true` invalida login imediatamente |
+| last_login_at | timestamptz | NULL | auditoria |
+| created_at / updated_at | timestamptz | NOT NULL | |
 
 ### 2.13 Prisma-style (textual, para referência de implementação)
 
@@ -638,6 +653,24 @@ Idempotência: dedupe por `update_id` em tabela/redis (TTL 24h); updates repetid
 | GET | `/homeworks/export` | CSV UTF-8 (com BOM p/ Excel) com os mesmos filtros de `GET /homeworks` |
 | POST | `/admin/users/:id/approve` | Admin aprova conta `pending` → `approved` (RF-24); 404 se inexistente |
 | POST | `/admin/users/:id/reject` | Admin rejeita conta → `rejected` + revoga refresh tokens (RF-24); 409 se alvo é admin |
+
+### 3.12 Acesso da criança (RF-25)
+
+Login por código (sem e-mail) + área somente leitura. JWT isolado `type="child_access"`
+(`sub=child_id`); `get_current_child_id()` exige esse tipo e recheca `revoked`/`active`
+no banco a cada request (revogação imediata). Token de criança em rota de pai → 401
+e vice-versa. `child_id` em `/v1/child/*` é sempre o `sub` do token (sem parâmetro de
+entrada — cross-child impossível por construção). Erros de código sempre `401 INVALID_CODE`
+genérico (anti-oráculo); código nunca em claro fora da resposta de geração, nunca em log.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| POST | `/auth/child/login` | `{code}` → `{access_token, expires_in (7200 s), child:{id,name,grade_level}}`; TTL 2h sem refresh (expiração respeitada no cliente); 5/min por IP + lockout de 10 falhas/15 min (só código bem-formado conta; sucesso zera; 429 + `Retry-After`); formato inválido → 400 sem contar falha |
+| GET | `/child/me` | `{id, name, grade_level}` (sem PII além de nome/série) |
+| GET | `/child/homeworks` | Todas as tarefas da criança (`subject/title/statement/due_at/status/scheduled_start/end/estimated_minutes/priority`); filtros `status/subject/q/sort/page/page_size`; read-only |
+| POST | `/children/:id/access-code` | Dono gera/regenera (201, código retornado **uma vez**); 403 cross-account, 404 sem criança |
+| GET | `/children/:id/access-code` | Metadados (`active/revoked/last_login_at/...`); nunca o código |
+| DELETE | `/children/:id/access-code` | Revoga (invalida login e tokens emitidos); 404 `CHILD_ACCESS_NOT_FOUND` sem credencial |
 
 ---
 
@@ -1371,6 +1404,7 @@ Funcionalidade: Upload de foto da tarefa
 ### 10.5 AuthN/AuthZ
 
 - JWT curto (15 min) + refresh (7 dias, rotacionável). `POST /v1/auth/register` (409 `EMAIL_TAKEN`), `/login` (401), `/refresh` (401). Senhas em Argon2id (RNF-06).
+- **Acesso da criança (RF-25, ativo):** código de 8 chars Crockford base32 por criança (hash Argon2id em `child_access`, migração `0013`), gerado/revogável pelo dono em `/v1/children/:id/access-code`; login em `POST /v1/auth/child/login` emite JWT `type="child_access"` (TTL `CHILD_TOKEN_EXPIRE_MINUTES=120`, sem refresh, com expiração respeitada no cliente); `GET /v1/child/me` + `GET /v1/child/homeworks` somente leitura; rate limit 5/min por IP + lockout de 10 falhas/15 min (só código bem-formado conta; sucesso zera o contador); erro sempre `401 INVALID_CODE` genérico.
 - **Aprovação de contas (RF-24, ativo):** `register` cria com `status='pending'` (sem tokens); `/login` com pendente → 403 `ACCOUNT_PENDING`, rejeitada → 403 `ACCOUNT_REJECTED` (credencial errada segue 401, sem oráculo). `generate_link_code`, vínculo no chat e gate do bot exigem `approved` (bot responde "conta em análise"). Admin aprova/rejeita via `POST /v1/admin/users/:id/approve|reject`; reject revoga refresh tokens (access residual expira em ≤15 min). Migração `0012` com backfill `approved` p/ contas existentes; seed admin nasce `approved`.
 - **Escopo por dono (ativo):** `child.owner_user_id` + `homework.created_by_user_id`; todas as rotas exigem Bearer (401 sem) e conta cruzada recebe 403 `FORBIDDEN` (CA-05). Migração `0004`.
 - Checagem de posse **no servidor** em toda rota de recurso (`guardian` ↔ `child`); previne IDOR.
@@ -1393,6 +1427,7 @@ Funcionalidade: Upload de foto da tarefa
 | `POST /homeworks/:id/reprocess` | 20/h por usuário; 5/min burst (cada chamada = inferência paga) |
 | `POST /v1/telegram/webhook` | 120/min por IP |
 | Login | 10 tentativas/15 min por IP+conta |
+| Login da criança (RF-25) | 5/min por IP + lockout após 10 falhas/15 min |
 | Global API | 300 req/min por usuário |
 
 Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
@@ -1438,6 +1473,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 | RNF Performance/Infra | §0.3, §11 |
 | LGPD/Segurança | §10 |
 | Contas/admin | §2.3 (`status`), §3.11 (approve/reject), §10.5 (RF-24) |
+| Acesso da criança | §2.14 (`child_access`), §3.12 (login + área read-only + gestão do código), §10.5 (RF-25) |
 | Qualidade/Testes/Obs | §9 |
 
 ---
@@ -1460,6 +1496,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 - **RF-14** Aplicar retenção/expurgo de imagens e consentimento LGPD.
 - **RF-15** Proteger rotas por dono e aplicar rate limiting.
 - **RF-24** Exigir aprovação do admin antes de liberar conta nova (`pending` → `approved`/`rejected`; login, vínculo Telegram e bot bloqueados até aprovação).
+- **RF-25** Acesso da criança por código: login sem e-mail em `/crianca`, visualização somente leitura de todas as tarefas em `/crianca/tarefas`, token JWT isolado `type="child_access"`, código gerado/revogável pelo responsável (§2.14, §3.12, §10.5).
 
 ---
 
@@ -1499,3 +1536,7 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 > v1.3 (2026-09-23): RF-16 — conta nova nasce `pending` e só usa a plataforma após aprovação do admin (login/vínculo/bot bloqueados; migração `0012` com backfill).
 >
 > v1.4 (2026-09-25): modelo `:free` como padrão (pago delistado 2026-09-24, 404 sem retry); aprovação renumerada **RF-16 → RF-24** (RF-16 volta a ser calendário semanal no PRD); beat com `_select_sender` (live direto / polling outbox), import de rotina com teto 20k + threadpool, bot com id curto + `concluir` escopado ao dono, listagem com paginação SQL, compose respeita `.env`, frontend mobile responsivo; testes 154 (27 arquivos), migrations 0001–0012.
+>
+> v1.7 (2026-10-04): **RF-25** — acesso da criança por código (tabela `child_access`, migração `0013`); JWT `type="child_access"` + `get_current_child_id()`; `POST /v1/auth/child/login` (5/min + lockout), `GET /v1/child/me|homeworks` (read-only), gestão do código em `/v1/children/:id/access-code`; frontend `/crianca` + `/crianca/tarefas` (`.child-*`, token `hdt.child.access`); testes 182 (28 arquivos).
+>
+> Correções pós-auditoria 4ª rodada: **A5** — `code_lookup` HMAC-SHA256 indexado (migração `0014`, login O(1) + fallback legado); **A6** — TTL da sessão criança 720→120 min + expiração client-side; **A7** — lockout só p/ código bem-formado + reset em sucesso.

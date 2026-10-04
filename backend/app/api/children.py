@@ -118,6 +118,54 @@ def get_agenda_view(child_id: str, owner: str = Depends(get_current_user_id)):
         return _err("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
 
 
+@router.post("/{child_id}/access-code", status_code=201)
+def create_access_code_view(child_id: str, owner: str = Depends(get_current_user_id)):
+    """RF-25: gera/regenera o código de acesso da criança. Plaintext retornado UMA vez."""
+    from app.tasks import child_access as CA
+
+    denied = _owned_or_error(child_id, owner)
+    if denied is not None:
+        return denied
+    try:
+        return CA.upsert_access_code(child_id)
+    except CA.NotFound:
+        return _err("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
+
+
+@router.get("/{child_id}/access-code", status_code=200)
+def get_access_code_view(child_id: str, owner: str = Depends(get_current_user_id)):
+    """RF-25: metadados do acesso (nunca o código)."""
+    from app.tasks import child_access as CA
+
+    denied = _owned_or_error(child_id, owner)
+    if denied is not None:
+        return denied
+    try:
+        meta = CA.get_access_code(child_id)
+    except CA.NotFound:
+        return _err("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
+    if meta is None:
+        return {"child_id": child_id, "active": False, "revoked": False,
+                "last_login_at": None, "created_at": None, "updated_at": None}
+    return meta
+
+
+@router.delete("/{child_id}/access-code", status_code=200)
+def revoke_access_code_view(child_id: str, owner: str = Depends(get_current_user_id)):
+    """RF-25: revoga o acesso (invalida login e tokens já emitidos)."""
+    from app.tasks import child_access as CA
+
+    denied = _owned_or_error(child_id, owner)
+    if denied is not None:
+        return denied
+    try:
+        return CA.revoke_access_code(child_id)
+    except CA.NotFound:
+        return _err("CHILD_NOT_FOUND", "Criança não encontrada.", 404)
+    except CA.NoAccessCode:
+        return _err("CHILD_ACCESS_NOT_FOUND", "Criança sem código de acesso.", 404)
+
+
 @router.post("/{child_id}/routine/import", status_code=201,
              dependencies=[Depends(limit(20, 3600, key="user", prefix="imp-hour")),
                            Depends(limit(5, 60, key="user", prefix="imp-min"))])

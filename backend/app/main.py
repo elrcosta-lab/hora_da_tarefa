@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
+from app.api.child import router as child_router
 from app.api.children import router as children_router
 from app.api.homeworks import router as homeworks_router
 from app.api.notifications import router as notifications_router
@@ -113,6 +114,7 @@ async def _global_rate_limit(request, call_next):
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(children_router)
+app.include_router(child_router)
 app.include_router(homeworks_router)
 app.include_router(suggestions_router)
 app.include_router(telegram_router)

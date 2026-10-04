@@ -62,8 +62,65 @@ export default function CriancasPage() {
   }, [loadChildren, router]);
 
   useEffect(() => {
-    if (childId) loadAgenda(childId).catch((e) => setMsg(e instanceof Error ? e.message : "Falha."));
+    if (childId) {
+      loadAgenda(childId).catch((e) => setMsg(e instanceof Error ? e.message : "Falha."));
+      loadAccess(childId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [childId, loadAgenda]);
+
+  async function loadAccess(cid: string) {
+    setShownCode(null);
+    try {
+      const m = await api<{ active: boolean; revoked: boolean; last_login_at?: string | null }>(
+        `/children/${cid}/access-code`
+      );
+      setAccessMeta(m);
+    } catch {
+      setAccessMeta(null);
+    }
+  }
+
+  async function genCode() {
+    if (!childId) return;
+    setAccessBusy(true);
+    setMsg(null);
+    try {
+      const body = await api<{ code: string }>(`/children/${childId}/access-code`, { method: "POST", body: "{}" });
+      setShownCode(body.code);
+      await loadAccess(childId);
+      setMsg("Código gerado! Anote agora — ele não será exibido de novo. 🔑");
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Falha ao gerar código.");
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
+  async function revokeCode() {
+    if (!childId || !window.confirm("Revogar o acesso da criança? Ela sairá na hora.")) return;
+    setAccessBusy(true);
+    try {
+      await api(`/children/${childId}/access-code`, { method: "DELETE" });
+      setShownCode(null);
+      await loadAccess(childId);
+      setMsg("Acesso da criança revogado.");
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "Falha ao revogar.");
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
+  async function copyCode() {
+    if (!shownCode) return;
+    try {
+      await navigator.clipboard.writeText(shownCode);
+      setMsg("Código copiado! 📋");
+    } catch {
+      setMsg("Não consegui copiar — anote o código da tela.");
+    }
+  }
 
   async function addChild(e: React.FormEvent) {
     e.preventDefault();
@@ -145,6 +202,13 @@ export default function CriancasPage() {
       setBusy(false);
     }
   }
+
+  // RF-25: acesso da criança por código
+  const [accessMeta, setAccessMeta] = useState<{
+    active: boolean; revoked: boolean; last_login_at?: string | null;
+  } | null>(null);
+  const [shownCode, setShownCode] = useState<string | null>(null);
+  const [accessBusy, setAccessBusy] = useState(false);
 
   // importação por inferência (texto/foto)
   const [impText, setImpText] = useState("");
@@ -241,6 +305,43 @@ export default function CriancasPage() {
         )}
 
         {!childId && <div className="empty">Cadastre uma criança para montar a rotina.</div>}
+
+        {childId && (
+          <div className="card child-code" style={{ marginBottom: 16 }} aria-label="Acesso da criança">
+            <h2>Acesso da criança 🔑</h2>
+            <p className="muted">
+              Gere um código para a criança entrar em <strong>/crianca</strong> e ver as tarefas dela.
+              {accessMeta && (
+                <>
+                  {" "}Status:{" "}
+                  <span className={`child-badge ${accessMeta.active ? "child-badge--on" : "child-badge--off"}`}>
+                    {accessMeta.active ? "Ativo ✅" : accessMeta.revoked ? "Revogado" : "Sem código"}
+                  </span>
+                  {accessMeta.last_login_at && (
+                    <> · último acesso: {new Date(accessMeta.last_login_at).toLocaleString("pt-BR")}</>
+                  )}
+                </>
+              )}
+            </p>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button className="btn-primary" disabled={accessBusy} onClick={genCode}>
+                {accessMeta?.active ? "Gerar novo código" : "Gerar código de acesso"}
+              </button>
+              {accessMeta?.active && (
+                <button className="btn-secondary" disabled={accessBusy} onClick={revokeCode}>
+                  Revogar acesso
+                </button>
+              )}
+            </div>
+            {shownCode && (
+              <div style={{ marginTop: 12 }}>
+                <p className="muted">Anote agora — este código não será exibido de novo:</p>
+                <p className="child-code-value" aria-label={`Código de acesso: ${shownCode}`}>{shownCode}</p>
+                <button className="btn-secondary" onClick={copyCode}>Copiar código 📋</button>
+              </div>
+            )}
+          </div>
+        )}
 
         {childId && (
           <>

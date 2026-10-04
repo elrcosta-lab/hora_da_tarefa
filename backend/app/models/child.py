@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import Boolean, CheckConstraint, Date, Integer, SmallInteger, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Date, ForeignKey, Integer, SmallInteger, String, Text, UniqueConstraint
 from sqlalchemy import DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -88,3 +88,24 @@ class ParentAvailability(Base):
     date: Mapped[Date | None] = mapped_column(Date, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+
+
+class ChildAccess(Base):
+    """Credencial de acesso da criança (RF-25): código Crockford base32, só hash Argon2id.
+
+    Sem PII nova — segredo operacional de visualização somente leitura,
+    gerado e revogável pelo responsável dono. Uma linha por criança.
+    """
+
+    __tablename__ = "child_access"
+
+    child_id: Mapped[str] = mapped_column(String(36), ForeignKey("child.id", ondelete="CASCADE"),
+                                          primary_key=True)
+    code_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    # A5: HMAC-SHA256 p/ lookup O(1) indexado (não revela o código; auth segue no Argon2id)
+    code_lookup: Mapped[str] = mapped_column(String(64), nullable=False, default="", index=True)
+    revoked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=_utcnow,
+                                                 onupdate=_utcnow)

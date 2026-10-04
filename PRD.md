@@ -1,8 +1,8 @@
 # PRD — Hora da Tarefa
 
 > **Status:** Beta (VPS)
-> **Versão:** 1.5 (modelo muse-spark + polling agenda extração)
-> **Última atualização:** 2026-09-25
+> **Versão:** 1.7 (RF-25 acesso da criança por código)
+> **Última atualização:** 2026-10-04
 > **Responsável:** Product Owner (a definir)
 > **Classificação:** Documento de requisitos de produto (PRD)
 
@@ -80,12 +80,12 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 - **Ganhos esperados:** dashboard simples com pendentes do dia, botão de confirmar/cancelar tarefa, histórico por matéria.
 - **Cenário de uso:** consulta a aba "Hoje" no app web e marca "concluída" após conferir o caderno.
 
-### 2.4 Persona Terciária — Miguel, o Filho (9 anos) (usuário indireto/beneficiário)
+### 2.4 Persona Terciária — Miguel, o Filho (9 anos) (usuário direto, somente leitura)
 
-- **Perfil:** 4º ano, faz natação (ter/qui) e inglês (seg/qua). Usa o celular do responsável ocasionalmente.
-- **Dores:** interrompe o lazer sem saber o prazo; esquece o que foi combinado.
-- **Ganhos esperados:** ser lembrado em linguagem simples ("faltam 2 horas para a tarefa de matemática"); marcar "feito" com um toque.
-- **Cenário de uso (pós-MVP):** recebe notificação no dispositivo da família com atalho "já fiz".
+- **Perfil:** 4º ano, faz natação (ter/qui) e inglês (seg/qua). Acessa o próprio conteúdo pelo celular da família.
+- **Dores:** não sabe o que está pendente nem o prazo; depende do responsável para saber "o que tem para hoje".
+- **Ganhos esperados:** entrar com o **código de acesso** em `/crianca` e ver suas tarefas em cards grandes, coloridos e com emojis, sabendo o prazo sem intermediário.
+- **Cenário de uso (RF-25):** digita o código em `/crianca`, vê `/crianca/tarefas` (mobile, sem sidebar) com a tarefa de matemática "entrega hoje". **Não conclui nem edita** — apenas consulta; quem confirma a conclusão continua sendo o responsável (Mariana/Carlos).
 
 ### 2.5 Persona Quaternária — Prof. Ana, a Professora (ator externo eventual)
 
@@ -119,6 +119,14 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 1. Carlos cria conta, cadastra a criança, a grade escolar (matéria × dia × hora) e as atividades fixas (natação, inglês) com duração e deslocamento.
 2. Define a janela de sono (ex.: 22h–07h) e as regras de bloqueio (refeições, lazer protegido).
 
+**Jornada 5 — Consulta da criança (Miguel) — RF-25**
+
+1. Carlos gera o código da criança em `/criancas` e entrega a Miguel.
+2. Miguel abre `/crianca` no celular da família e digita o código.
+3. Vê `/crianca/tarefas`: cards grandes, emojis e cores com todas as suas tarefas e prazos.
+4. Ao terminar, toca **Sair**. Nenhuma ação de conclusão/edição está disponível.
+5. Se o código vazar, Carlos revoga e gera um novo; o acesso antigo cessa imediatamente.
+
 ---
 
 ## 3. Escopo MVP vs Pós-MVP (MoSCoW)
@@ -151,6 +159,7 @@ O produto é **assistivo, não substitutivo**: a IA propõe, o responsável conf
 | RF-13 | Multi-criança | Should | Alto |
 | RF-14 | Multi-responsável e papéis | Should | Médio |
 | RF-24 | Aprovação de contas pelo admin (conta nova pendente) | Must | Alto |
+| RF-25 | Acesso da criança por código (visualização somente leitura) | Must | Alto |
 
 ### 3.3 Pós-MVP (Should remanescente + Could + futuro)
 
@@ -366,6 +375,29 @@ Foto nova nasce `pendente` (+ `extraction_status=processando`); extração OK pr
 - Conta pendente não lista/cria nada via web, vínculo ou bot.
 - Sem UI de admin no beta — aprovação via API com token do admin (ver `docs/GO-LIVE.md` §4).
 
+### RF-25 — Acesso da Criança por Código (Visualização Somente Leitura) (M)
+
+**Descrição:** A criança acessa, por rota separada e kid-friendly (`/crianca`), uma área em que faz login **apenas com o código de acesso** (sem e-mail/senha) e visualiza **todas as suas tarefas em modo somente leitura** (`/crianca/tarefas`). O código é gerado e revogável pelo responsável; o acesso da criança é isolado dos fluxos do responsável.
+
+**Regras:**
+- **Código:** 8 caracteres Crockford base32 (ex.: `K7M2-P9QT`, ~40 bits), gerado pelo responsável em `/criancas`, persistente e revogável; armazenado **somente como hash Argon2id** (nunca em claro, nunca em log). Comparação *case-insensitive* e insensível a hífen.
+- **Geração exige responsável `approved`** (RF-24): conta `pending`/`rejected` não gera código.
+- **Escopo de dados:** todas as tarefas da criança dona do código (`subject`, `title`, `statement`, `due_at`, `status`, `scheduled_start/end`). **Somente visualizar** — sem concluir, agendar, editar ou excluir.
+- **Token:** JWT isolado `type="child_access"`, `sub=child_id`, TTL 2h, sem acesso a rotas do responsável (e vice-versa). Revogação rechecada no banco a cada request.
+- **Rate limit estrito** no login por código (5/min por IP + lockout de 10 falhas/15 min — só código bem-formado conta; sucesso zera o contador), resposta genérica sem oráculo.
+- **UI:** `/crianca` (login de 1 campo) e `/crianca/tarefas` (cards grandes, emojis, cores), **mobile-first**, **sem sidebar**, botão **Sair**.
+
+**Critérios de aceite:**
+- Gerar código com responsável `approved` retorna 8 chars válidos; `GET` nunca devolve o código.
+- Login com código válido retorna `200` + token `child_access`; inválido/revogado → `401` genérico.
+- Token `child_access` em rota de responsável → `401`; token de responsável em rota `/crianca` → `401`.
+- `GET /v1/child/homeworks` retorna **todas** as tarefas da criança e **nenhuma** de outra criança.
+- Após revogar, novo login falha e tokens já emitidos caem.
+- Falhas repetidas retornam `429` com `Retry-After`.
+- Telas sem sidebar, com botão Sair, alvos ≥ 44px (RNF-13), carregamento ≤ 2s (RNF-02).
+
+**Fora de escopo (RF-25):** criança concluir/agendar/editar tarefas; login por e-mail/senha; gamificação (RF-22); push para a criança (RF-19).
+
 ---
 
 ## 5. Requisitos Não-Funcionais
@@ -542,7 +574,7 @@ sequenceDiagram
 ### 8.3 Banco de Dados
 
 - **Produção:** PostgreSQL 16 (Docker). **Dev/testes:** SQLite permitido.
-- **Modelo de dados (implementado):** `app_user` (+ `refresh_token`, vínculo Telegram, papel admin, `status` p/ RF-24), `child`, `school_schedule`, `activity`, `parent_availability`, `homework`, `homework_image`, `suggestion_slot`, `notification_setting`, `notification_log` (migrations Alembic `0001–0012`).
+- **Modelo de dados (implementado):** `app_user` (+ `refresh_token`, vínculo Telegram, papel admin, `status` p/ RF-24), `child` (+ `child_access`: código da criança p/ RF-25, hash Argon2id + lookup HMAC), `school_schedule`, `activity`, `parent_availability`, `homework`, `homework_image`, `suggestion_slot`, `notification_setting`, `notification_log` (migrations Alembic `0001–0014`).
 - **Isolamento:** toda query escopada por dono (`child.owner_user_id` / `homework.created_by_user_id`) e, quando aplicável, `child_id`; conta cruzada recebe 403.
 
 ### 8.4 Fila / Agendador
@@ -658,6 +690,7 @@ sequenceDiagram
 | 1.4 | 2026-09-25 | OpenCode | Modelo `:free` como padrão (pago delistado 2026-09-24); aprovação renumerada para **RF-24** (RF-16 volta a ser calendário semanal); beat via outbox no polling, import com teto+threadpool, bot com id curto, paginação SQL, compose respeita `.env`, testes 154/migrations 0012 |
 | 1.5 | 2026-09-25 | OpenCode | Troca para `meta/muse-spark-1.3-contributor` (família nex delistada 24-25/09; validado na foto real; requer 18+ e ajuste de privacidade na conta OpenRouter); polling agenda extração em thread |
 | 1.6 | 2026-09-29 | OpenCode | Atraso em data-SP (fuso corrigido no beat/`today`/API) + KPI de atrasadas pelo vencimento real; runbook de recuperação de versionamento (stamp) |
+| 1.7 | 2026-10-04 | OpenCode | RF-25: acesso da criança por código de 8 chars Crockford (~40 bits, Argon2id, revogável) em `/crianca`, visualização somente leitura de todas as tarefas, token JWT isolado `type="child_access"` (sessão 2h), rate limit estrito; persona/jornada de Miguel atualizadas; correções pós-auditoria (lookup HMAC O(1), TTL 120 min, lockout justo) |
 
 ---
 

@@ -17,4 +17,6 @@
 
 Todas as 8 telas do §7 geradas (Dashboard, Upload, Detalhe, Calendário, Grade/Atividades, Notificações, Histórico, Onboarding).
 
-> Nota (beta): o frontend implementado (`frontend/app/`) organiza-se em **dashboard, tarefas, crianças, calendário, configurações, onboarding, login** — as telas Stitch acima serviram de referência visual (tokens no design system), não de mapa 1:1 de rotas.
+> Nota (beta): o frontend implementado (`frontend/app/`) organiza-se em **dashboard, tarefas, crianças, calendário, configurações, onboarding, login, área da criança** — as telas Stitch acima serviram de referência visual (tokens no design system), não de mapa 1:1 de rotas.
+
+> Nota (RF-25): as rotas **`/crianca`** (login por código, 1 campo) e **`/crianca/tarefas`** (cards grandes somente leitura, sem sidebar, mobile-first) seguem os mesmos tokens (LIGHT/INTER/ROUND_EIGHT, `#2563EB` + `#22C55E` + `#8B5CF6` sobre `#F8FAFC`, projeto `projects/4805605155528614577` MOBILE) com raio e alvos ampliados para o público infantil (`.child-*` em `globals.css`). Sessão infantil de 2h (`CHILD_TOKEN_EXPIRE_MINUTES=120`, expiração respeitada no cliente via `hdt.child.exp`).

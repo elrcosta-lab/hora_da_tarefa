@@ -1,4 +1,4 @@
-# Runbook de Go-Live (beta) — Hora da Tarefa (v1.6, 2026-09-29)
+# Runbook de Go-Live (beta) — Hora da Tarefa (v1.7, 2026-10-04)
 
 > **Regra de ouro: nenhum segredo entra no git.** `OPENROUTER_API_KEY`,
 > `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `POSTGRES_PASSWORD`,
@@ -40,6 +40,7 @@ cp .env.example .env
 # preencher: OPENROUTER_API_KEY, TELEGRAM_BOT_TOKEN, TELEGRAM_WEBHOOK_SECRET (gerar: python3 -c "import secrets; print(secrets.token_urlsafe(32))"),
 # POSTGRES_PASSWORD, JWT_SECRET (≥32 chars), S3_SECRET_KEY
 # ajustar: WEB_API_URL=https://api.<dominio>, CORS_ORIGINS=https://app.<dominio>
+# RF-25: CHILD_TOKEN_EXPIRE_MINUTES (default 120; sessão somente-leitura da criança, sem refresh)
 ```
 
 ## 3. Webhook do Telegram (opcional — após DNS + TLS)
@@ -80,10 +81,10 @@ ssh -i $SSH_KEY $VPS "cd /opt/hora_da_tarefa && docker compose build -q api \
 # primeira subida (na VPS)
 docker compose up -d --build
 docker compose ps                    # todos healthy
-docker compose logs api | grep -i alembic   # 0001→0012 aplicadas
+docker compose logs api | grep -i alembic   # 0001→0014 aplicadas (0013 child_access, 0014 lookup HMAC)
 ```
 
-Roteiro funcional (navegador + Telegram): registro com consentimento → **aprovação do admin (abaixo, RF-24)** → onboarding (filho → grade → código) → `/start <código>` → foto → revisão → agendar → `/hoje` → concluir (bot aceita id curto de 8 chars) → CSV em Tarefas.
+Roteiro funcional (navegador + Telegram): registro com consentimento → **aprovação do admin (abaixo, RF-24)** → onboarding (filho → grade → código) → `/start <código>` → foto → revisão → agendar → `/hoje` → concluir (bot aceita id curto de 8 chars) → CSV em Tarefas → **área da criança (RF-25)**: gerar código em Crianças → entrar em `/crianca` → ver `/crianca/tarefas` → Sair → revogar e confirmar bloqueio.
 
 **Aprovar/rejeitar contas (RF-24):** sem UI de admin no beta — via API com token do admin:
 ```bash
@@ -91,6 +92,23 @@ export AT="<access_token do admin>"
 curl -s http://localhost:8081/v1/admin/users | python3 -c "import json,sys; [print(u['user_id'], u['email'], u['status']) for u in json.load(sys.stdin)['items']]"
 curl -s -X POST http://localhost:8081/v1/admin/users/<user_id>/approve -H "Authorization: Bearer $AT"
 # rejeitar: POST .../reject (revoga sessões; admin não pode ser rejeitado)
+```
+
+**Deploy da RF-25 (área da criança):** arquivos novos/alterados além do fluxo acima — sincronizar todos antes do rebuild (o boot aplica `0013→0014` sozinho, aditivas, sem backfill):
+```bash
+for f in backend/alembic/versions/0013_child_access.py backend/alembic/versions/0014_child_access_lookup.py \
+         backend/app/api/child.py backend/app/tasks/child_access.py backend/app/api/auth.py \
+         backend/app/api/children.py backend/app/core/security.py backend/app/core/ratelimit.py \
+         backend/app/core/config.py backend/app/main.py backend/app/models/child.py \
+         backend/app/models/__init__.py frontend/lib/child-api.ts \
+         frontend/app/crianca/page.tsx frontend/app/crianca/tarefas/page.tsx \
+         frontend/app/criancas/page.tsx frontend/app/globals.css; do
+  rsync -avz -e "ssh -i $SSH_KEY" "$f" "$VPS:/opt/hora_da_tarefa/$f"
+done
+ssh -i $SSH_KEY $VPS "cd /opt/hora_da_tarefa && docker compose build -q api web && docker compose up -d api web \
+  && sleep 15 && docker compose logs api | grep -i 'upgrade 0013' \
+  && curl -s -o /dev/null -w 'web=%{http_code}\n' http://localhost:3100/crianca"
+# rollback das migrations (se preciso): docker compose exec api alembic -c /app/alembic.ini downgrade -1  (0014), de novo (0013)
 ```
 
 ## 5. Operação e rollback

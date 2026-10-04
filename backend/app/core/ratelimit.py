@@ -125,3 +125,45 @@ def global_limit() -> tuple[int, int]:
     except ValueError:
         per_min = 300
     return per_min, 60
+
+
+# RF-25: lockout do login da criança por IP (anti-brute-force do código persistente).
+CHILD_LOGIN_FAIL_LIMIT = 10
+CHILD_LOGIN_FAIL_WINDOW_S = 900
+
+
+def note_child_login_failure(ip: str) -> None:
+    get_limiter().hit(f"child-login-fail:{ip}", CHILD_LOGIN_FAIL_LIMIT, CHILD_LOGIN_FAIL_WINDOW_S)
+
+
+def clear_child_login_failures(ip: str) -> None:
+    """A7: login válido zera o contador (evita bloqueio por erros antigos de digitação)."""
+    limiter = get_limiter()
+    key = f"child-login-fail:{ip}"
+    client = limiter._client()
+    if client is not None:
+        try:
+            client.delete(key)
+        except Exception:
+            pass
+        return
+    limiter._mem.pop(key, None)
+
+
+def child_login_locked(ip: str) -> bool:
+    """True se o IP estourou as falhas (consulta sem incrementar o contador)."""
+    limiter = get_limiter()
+    key = f"child-login-fail:{ip}"
+    client = limiter._client()
+    if client is not None:
+        try:
+            val = client.get(key)
+            return val is not None and int(val) > CHILD_LOGIN_FAIL_LIMIT
+        except Exception:
+            return False
+    import time as _time
+
+    entry = limiter._mem.get(key)
+    if entry is None or _time.monotonic() >= entry[1]:
+        return False
+    return entry[0] > CHILD_LOGIN_FAIL_LIMIT

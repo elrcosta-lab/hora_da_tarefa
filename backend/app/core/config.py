@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     JWT_SECRET: str  # sem default de propósito: falhar fechado sem segredo explícito
     JWT_EXPIRE_MINUTES: int = 15
     REFRESH_EXPIRE_DAYS: int = 7
+    # RF-25: sessão somente-leitura da criança (A6: 2h, sem refresh; revogação rechecada no banco)
+    CHILD_TOKEN_EXPIRE_MINUTES: int = 120
 
 
 def get_settings() -> Settings:

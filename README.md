@@ -2,7 +2,7 @@
 
 SaaS que organiza a lição de casa dos filhos de ponta a ponta: o responsável envia a **foto da tarefa** (app web ou Telegram), a IA extrai matéria/prazo/enunciado, o motor sugere o melhor horário livre (grade + atividades + sono) e o bot lembra e cobra a conclusão.
 
-> **Status:** beta na VPS · **Versão docs:** 1.6 (2026-09-29) · **Docs:** [PRD](PRD.md) (produto) · [SPECS](SPECS.md) (técnica) · [Go-Live](docs/GO-LIVE.md) (runbook) · [Auditoria](AUDITORIA.md) (segurança) · [Telas](design/SCREENS.md) (Stitch)
+> **Status:** beta na VPS · **Versão docs:** 1.7 (2026-10-04) · **Docs:** [PRD](PRD.md) (produto) · [SPECS](SPECS.md) (técnica) · [Go-Live](docs/GO-LIVE.md) (runbook) · [Auditoria](AUDITORIA.md) (segurança) · [Telas](design/SCREENS.md) (Stitch)
 
 ## Stack
 
@@ -19,17 +19,17 @@ SaaS que organiza a lição de casa dos filhos de ponta a ponta: o responsável 
 ## Estrutura
 
 ```
-├── frontend/          # Next.js: dashboard, tarefas, crianças, calendário, configurações, onboarding, login
+├── frontend/          # Next.js: dashboard, tarefas, crianças, calendário, configurações, onboarding, login, área da criança (/crianca)
 ├── backend/
 │   ├── app/
-│   │   ├── api/       # routers FastAPI (auth, homeworks, children, suggestions, notifications, usage, admin, telegram)
+│   │   ├── api/       # routers FastAPI (auth, homeworks, children, child, suggestions, notifications, usage, admin, telegram)
 │   │   ├── bot/       # handlers Telegram + polling + API HTTP (httpx)
 │   │   ├── core/      # config, security (JWT/Argon2id), db, ratelimit, storage
-│   │   ├── models/    # AppUser, Child, SchoolSchedule, Activity, Homework, SuggestionSlot, Notify…
+│   │   ├── models/    # AppUser, Child (+ChildAccess), SchoolSchedule, Activity, Homework, SuggestionSlot, Notify…
 │   │   ├── services/  # vision_openrouter, scheduling, textnorm
-│   │   └── tasks/     # extract, routine, notify, users, admin, beat (persistência via SQLAlchemy)
-│   ├── alembic/versions/  # migrations 0001–0012 (0012: status da conta p/ aprovação RF-24)
-│   └── tests/         # 27 arquivos de teste, 160 testes (pytest)
+│   │   └── tasks/     # extract, routine, notify, users, admin, beat, child_access (persistência via SQLAlchemy)
+│   ├── alembic/versions/  # migrations 0001–0014 (0014: lookup O(1) do código da criança)
+│   └── tests/         # 28 arquivos de teste, 182 testes (pytest)
 ├── ai/prompts/        # system prompt da extração
 ├── design/SCREENS.md  # telas de referência (Stitch)
 ├── docker-compose.yml # postgres + redis + minio + api + web + caddy
@@ -51,7 +51,7 @@ docker compose up -d --build
 ## Testes
 
 ```bash
-PYTHONPATH=backend python3 -m pytest backend/tests -q   # 160 testes, sem IA (mocks)
+PYTHONPATH=backend python3 -m pytest backend/tests -q   # 182 testes, sem IA (mocks)
 ```
 
 Integração IA live é manual/noturna (`OPENROUTER_API_KEY` + fixtures sem PII) — ver SPECS §9.2.
@@ -74,6 +74,10 @@ Comandos: `/start` `/ajuda` `/hoje` `/tarefas` `/concluir <id>` `/criancas`. Ace
 ## Contas e aprovação (RF-24)
 
 Conta nova nasce **pendente** e só usa a plataforma após aprovação do admin (login, vínculo Telegram e bot retornam `ACCOUNT_PENDING`). Rejeitada → `ACCOUNT_REJECTED` + sessões revogadas. Admin aprova/rejeita via `POST /v1/admin/users/:id/approve|reject` (sem UI no beta — ver `docs/GO-LIVE.md` §4).
+
+## Área da criança (RF-25)
+
+A criança entra em `/crianca` com o **código de acesso** (8 chars, gerado pelo responsável em Crianças) e vê **todas as suas tarefas em modo somente leitura** (`/crianca/tarefas`, sem sidebar, mobile-first). Token JWT isolado `type="child_access"` (sessão de 2h) — sem acesso às rotas do responsável e vice-versa. Login com rate limit + lockout; revogar o código derruba o acesso na hora.
 
 ## Regras de contribuição
 

@@ -131,6 +131,47 @@ h2 { font-size: 18px; margin: 0 0 12px; }
 .muted { color: var(--text-muted); font-size: 13px; }
 .empty { text-align: center; color: var(--text-muted); padding: 24px; }
 
+/* RF-25: área da criança — kid-friendly sobre os tokens do projeto.
+   Base: Stitch "Hora da Tarefa" (LIGHT, Inter, ROUND_EIGHT, azul #2563eb,
+   verde #22c55e, violeta #8b5cf6, fundo #f8fafc), mobile-first, sem sidebar. */
+.child-wrap {
+  min-height: 100vh; max-width: 640px; margin: 0 auto; padding: 24px 16px calc(24px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, #eff6ff 0%, var(--background) 240px);
+}
+.child-card { border-radius: 20px; border-top: 6px solid var(--tertiary); text-align: center; }
+.child-hero { display: flex; justify-content: center; margin-bottom: 8px; }
+.child-hero img { border-radius: 16px; }
+.child-title { font-size: 28px; margin: 0 0 4px; }
+.child-sub { font-size: 15px; }
+.child-card label { text-align: left; }
+.child-code-input {
+  font-size: 24px !important; font-weight: 800; letter-spacing: 3px; text-align: center;
+  text-transform: uppercase; font-family: ui-monospace, monospace;
+}
+.child-enter { font-size: 18px !important; min-height: 56px !important; border-radius: 14px !important; }
+.child-header { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; }
+.child-header h1 { font-size: 24px; margin: 4px 0 0; }
+.child-header .muted { margin: 2px 0 0; }
+.child-header img { border-radius: 10px; }
+.child-logout { margin-left: auto; flex-shrink: 0; border-radius: 14px !important; }
+.child-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.child-list .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.child-task { border-radius: 16px !important; border-left: 6px solid var(--secondary) !important; font-size: 16px; }
+.child-task-title { font-weight: 800; font-size: 18px; margin: 8px 0 4px; }
+.child-task-stmt { margin: 0 0 8px; }
+.child-task .meta { font-size: 14px; margin: 4px 0 0; }
+.child-skeleton { height: 120px; margin-bottom: 12px; border-radius: 16px; }
+.child-empty { border-radius: 20px !important; text-align: center; padding: 32px 16px !important; }
+.child-empty-emoji { font-size: 56px; margin: 0; }
+.child-code { border-radius: 16px !important; border: 2px dashed var(--tertiary) !important; text-align: center; }
+.child-code-value {
+  font-family: ui-monospace, monospace; font-size: clamp(28px, 9vw, 36px); font-weight: 800;
+  letter-spacing: 4px; user-select: all; margin: 8px 0;
+}
+.child-badge { border-radius: 9999px; padding: 4px 12px; font-size: 13px; font-weight: 700; }
+.child-badge--on { background: #dcfce7; color: #15803d; }
+.child-badge--off { background: #f1f5f9; color: #475569; }
+
 /* Fase 1 mobile: upload por câmera, sheet detalhe, sticky actions */
 .file-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .upload-label { display: inline-flex; align-items: center; justify-content: center; min-height: 48px; }

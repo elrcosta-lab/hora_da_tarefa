@@ -1,10 +1,11 @@
-"""Auth por senha + pareamento Telegram (SPECS §3.11, §10.5)."""
-from fastapi import APIRouter, Depends
+"""Auth por senha + pareamento Telegram + login da criança (SPECS §3.11 §3.12, §10.5)."""
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core.security import create_tokens, decode_token, get_current_user_id
-from app.core.ratelimit import limit
+from app.core.ratelimit import RateLimited, child_login_locked, clear_child_login_failures
+from app.core.ratelimit import limit, note_child_login_failure
 from app.tasks import users as U
 
 router = APIRouter(prefix="/v1/auth", tags=["auth"])
@@ -106,3 +107,34 @@ def link_status_view(current_user_id: str = Depends(get_current_user_id)):
         return _err("USER_NOT_FOUND", "Usuário não encontrado.", 404)
     return {"linked": user.get("telegram_user_id") is not None,
             "telegram_user_id": user.get("telegram_user_id")}
+
+
+class ChildLoginIn(BaseModel):
+    code: str
+
+
+@router.post("/child/login", status_code=200,
+             dependencies=[Depends(limit(5, 60, key="ip", prefix="child-login"))])
+def child_login_view(payload: ChildLoginIn, request: Request):
+    """RF-25: login da criança por código (sem e-mail). Erro sempre genérico (anti-oráculo)."""
+    from app.core.config import get_settings
+    from app.core.security import create_child_access_token, normalize_child_code
+    from app.tasks import child_access as CA
+
+    ip = request.client.host if request.client else "unknown"
+    if child_login_locked(ip):
+        raise RateLimited(900)
+    # A7: formato inválido nem chega a contar falha (rejeitado sem custo de Argon2)
+    if normalize_child_code(payload.code) is None:
+        return _err("VALIDATION_ERROR", "Código inválido.", 400)
+    child = CA.login_by_code(payload.code)
+    if child is None:
+        note_child_login_failure(ip)
+        return _err("INVALID_CODE", "Código inválido.", 401)
+    clear_child_login_failures(ip)
+    settings = get_settings()
+    return {"access_token": create_child_access_token(child["id"], settings.JWT_SECRET,
+                                                      settings.CHILD_TOKEN_EXPIRE_MINUTES),
+            "token_type": "bearer",
+            "expires_in": settings.CHILD_TOKEN_EXPIRE_MINUTES * 60,
+            "child": child}

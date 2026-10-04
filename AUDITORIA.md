@@ -1,3 +1,131 @@
+# Auditoria de Segurança — Hora da Tarefa (4ª rodada: RF-25 + regressão)
+
+- Data: 2026-10-04
+- Stack detectada: Next.js 14 (App Router) + FastAPI + SQLAlchemy 2 + Postgres 16 + Redis 7 + MinIO (S3) + JWT HS256 (`access`/`refresh`/`child_access`) + Argon2id + bot Telegram próprio sobre httpx (polling) + OpenRouter (`meta/muse-spark-1.3-contributor`)
+- Escopo: delta RF-25 desde a 3ª rodada (`backend/app/{api/child.py,api/auth.py,api/children.py,tasks/child_access.py,core/security.py,core/ratelimit.py,core/config.py,models/child.py,alembic/versions/0013_child_access.py,tests/test_child_access.py}`, `frontend/{lib/child-api.ts,app/crianca/,app/criancas/page.tsx,app/globals.css}`, `PRD.md` v1.7, `SPECS.md` §2.14/§3.12/§10.5) + regressão dos fixes A1–A4/O1 + re-varredura V1–V6 no repo local e compose dev. **VPS fora do escopo desta rodada** (sem acesso SSH): estado de produção segue o da 3ª rodada; o código RF-25 ainda não foi para a VPS (deploy via rsync pendente — ver O13). Somente leitura; nada foi modificado.
+
+## Resumo executivo (4ª rodada)
+
+| Severidade | Quantidade |
+|---|---|
+| Crítica | 0 |
+| Alta | 0 |
+| Média | 1 |
+| Baixa | 2 |
+
+**Prioridade de correção:** A5, depois A6–A7. Nenhum bloqueador para o beta: o isolamento entre famílias e entre pai/filho foi verificado por código + 16 testes.
+
+## Status pós-correção (2026-10-04, verificado)
+
+| Item | Status | Evidência |
+|---|---|---|
+| A5 login O(n) Argon2 | ✅ corrigido | `code_lookup` HMAC-SHA256 indexado (`models/child.py`, migração `0014` aplicada no Postgres do compose, índice `ix_child_access_code_lookup`); `login_by_code` O(1) + fallback só p/ linhas legadas (`tasks/child_access.py`); 2 testes novos (`test_code_lookup_is_hmac_not_plaintext`, `test_legacy_row_without_lookup_still_logs_in`) |
+| A6 sessão 12h em aparelho compartilhado | ✅ corrigido | `CHILD_TOKEN_EXPIRE_MINUTES` 720→120 (`core/config.py:37`, `.env.example`); expiração respeitada no cliente (`hdt.child.exp` em `lib/child-api.ts:5-22`); `expires_in=7200` coberto em teste; smoke E2E confirma |
+| A7 lockout sem reset / conta formato inválido | ✅ corrigido | formato inválido → 400 sem contar (`api/auth.py:126-127`); `clear_child_login_failures()` em sucesso (`core/ratelimit.py:139`, `api/auth.py:132`); 2 testes novos (malformado não conta; 9+acerto+9 não trava) |
+| Regressão | ✅ sem regressão | 63/63 em child/auth/ratelimit/routine/approval/admin/bot/FSM; suíte total 182 coletados, falhas só as ambientais pré-existentes (comprovadas em código pristino); `tsc` + build web OK; `/crianca` 200 |
+
+## Achados (4ª rodada)
+
+### [A5] Login da criança custa O(n) Argon2id por tentativa (amplificação) — backend/app/tasks/child_access.py:100-115
+- **Severidade:** Média
+- **Evidência:**
+  ```python
+  # backend/app/tasks/child_access.py:104-115
+  rows = (s.query(ChildAccess, Child)
+          .join(Child, Child.id == ChildAccess.child_id)
+          .filter(ChildAccess.revoked.is_(False), Child.active.is_(True))
+          .all())
+  for access, child in rows:
+      if verify_child_code(code, access.code_hash):  # Argon2id (~64 MB RAM + ~0,2-0,5 s CPU cada)
+  ```
+- **Risco:** endpoint público (`POST /v1/auth/child/login`) executa até N verifies Argon2id por chamada; o custo por tentativa cresce com a base e, em 1 vCPU/4 GB, dezenas de crianças já dão segundos de CPU por request — rate limit 5/min + lockout 10/15 min mitigam por IP, mas rotação de IP multiplica o efeito.
+- **Correção:**
+  ```python
+  # coluna indexada p/ lookup O(1) + 1 Argon2 final (pepper só no servidor, nunca no banco em claro)
+  code_lookup: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+  # na geração: row.code_lookup = hmac.new(PEPPER, norm.encode(), hashlib.sha256).hexdigest()
+  # no login: row = s.query(ChildAccess).filter_by(code_lookup=lookup).one_or_none()
+  #           if row and verify_child_code(code, row.code_hash): ...
+  ```
+
+### [A6] Sessão da criança longa (12h) em `localStorage` de dispositivo compartilhado — backend/app/core/config.py:37 + frontend/lib/child-api.ts:5-17
+- **Severidade:** Baixa
+- **Evidência:**
+  ```python
+  # backend/app/core/config.py:37
+  CHILD_TOKEN_EXPIRE_MINUTES: int = 720
+  ```
+  ```ts
+  // frontend/lib/child-api.ts:5-17
+  const CHILD_LS = "hdt.child.access";
+  export function saveChildToken(token: string) {
+    localStorage.setItem(CHILD_LS, token);  // sem expiração client-side nem idle timeout
+  }
+  ```
+- **Risco:** no celular/tablet da família, quem abrir `/crianca/tarefas` após o uso vê as tarefas da criança se ela não tocou em Sair; dado exposto limita-se às tarefas (sem PII além de nome/série), e a revogação server-side continua valendo.
+- **Correção:**
+  ```python
+  # backend/app/core/config.py — TTL menor p/ sessão infantil
+  CHILD_TOKEN_EXPIRE_MINUTES: int = 120
+  ```
+  ```ts
+  // frontend/lib/child-api.ts — respeitar exp e orientar a saída
+  // guardar `expires_at` junto do token e, se vencido, limpar + redirecionar a /crianca
+  // com aviso "Por segurança, entre com o código de novo"; reforçar o botão Sair na UI
+  ```
+
+### [A7] Lockout conta formato inválido e não reseta em sucesso — backend/app/api/auth.py:123-132
+- **Severidade:** Baixa
+- **Evidência:**
+  ```python
+  # backend/app/api/auth.py:123-131
+  ip = request.client.host if request.client else "unknown"
+  if child_login_locked(ip):
+      raise RateLimited(900)
+  if not (payload.code or "").strip():
+      return _err("VALIDATION_ERROR", "Informe o código de acesso.", 400)
+  child = CA.login_by_code(payload.code)
+  if child is None:
+      note_child_login_failure(ip)  # conta até formato inválido (rejeitado sem custo no §2.2)...
+      return _err("INVALID_CODE", "Código inválido.", 401)
+  # ...e o sucesso não limpa o contador: 11 erros (até de digitação) bloqueiam o IP por 15 min
+  ```
+- **Risco:** negação acidental do acesso da criança (auto-DoS por digitação inocente) e, no limite, terceiro que conheça o IP da casa trava o login por 15 min com 11 requests baratos.
+- **Correção:**
+  ```python
+  from app.core.security import normalize_child_code
+  norm = normalize_child_code(payload.code)
+  if norm is None:
+      return _err("VALIDATION_ERROR", "Código inválido.", 400)  # sem contar falha
+  child = CA.login_by_code(norm)
+  if child is None:
+      note_child_login_failure(ip)
+      return _err("INVALID_CODE", "Código inválido.", 401)
+  clear_child_login_failures(ip)  # reset em sucesso (helper novo no ratelimit)
+  ```
+
+## Observações adicionais (4ª rodada)
+
+- **O10 — Burst 5/min conta sucessos:** `limit(5, 60, key="ip")` (`auth.py:116`) soma logins válidos e inválidos por IP; casa com 2+ crianças digitando junto + 1 erro cada já toma 429 legítimo. Robustez/UX, não vulnerabilidade — avaliar `key` por código normalizado além do IP.
+- **O11 — Oráculo de timing desprezível:** `login_by_code` retorna cedo no match e varre tudo no miss; sob rate limit + lockout não há orçamento para explorar a diferença. Sem ação (some se A5 for corrigido com lookup O(1)).
+- **O12 — Higiene menor do `child_access`:** `last_login_at` não reseta ao regenerar e o hash do código revogado permanece no banco — inofensivo (Argon2id), sem PII. Sem ação obrigatória.
+- **O13 — RF-25 ainda fora da VPS:** o deploy é via rsync (sem clone git lá); ao subir, `upgrade head` aplica a `0013` (aditiva, sem backfill/stamp). Validado localmente: `0012 → 0013` no Postgres do compose + smoke E2E (register→approve→código→login→tarefas→isolamento→revogação).
+- **O14 — 3ª rodada segue válida p/ a VPS:** O2 (sem TLS), O3 (LGPD/transbordo), O5–O9 não foram re-verificados por falta de acesso SSH — nada no delta RF-25 os altera.
+- **O15 — `GET /docs` aberto localmente é esperado** (`ENV=dev` aqui; prod mantém `docs_url=None` — A6 da 2ª rodada intacto em `main.py:59`).
+
+## Pontos verificados sem achados (4ª rodada)
+
+- **V1 (isolamento ~ RLS):** rotas `/v1/child/*` filtram sempre pelo `sub` do token (sem `child_id` de entrada — cross-child impossível por construção); `access-code` exige dono (`_owned_or_error` → 404/403); JWT cross-tipo rejeitado nos dois sentidos (`expect="access"` × `expect="child_access"`); revogação rechecada no banco a cada request. Cobertura: 16 testes novos (`test_child_access.py`) + smoke E2E no Postgres.
+- **V2:** nenhuma decisão de permissão no frontend infantil (páginas só leem via `childApi`; `normalizeCode` client-side é UX); sem `isAdmin`/`role` no cliente; sem tela admin.
+- **V3:** `:id` com 404 + 403; `accept`/`delete_activity`/FSM inalterados; `page/page_size` clampados, `offset` com `max(0, …)`; `sort` sem SQL cru (só `due_at` especial, resto `created_at`).
+- **V4:** `.env`/`.env.local` ignorados, só `.env.example` rastreado (placeholders); `NEXT_PUBLIC_*` só com URL e handle público do bot; sem JWT/chave privada hardcoded; sem `sk-or` real no histórico; CORS restrito a localhost neste ambiente; `CHILD_TOKEN_EXPIRE_MINUTES` não é segredo; código de acesso nunca em log (grep em `api/child.py`, `tasks/child_access.py`, `auth.py`, `security.py` limpo; teste `test_login_does_not_log_code` verde).
+- **V5:** `ChildLoginIn` (Pydantic) nas entradas novas; sem `req.body` cru, sem mass assignment (upsert só toca `code_hash`/`revoked` server-side); sem sinks XSS (`dangerouslySetInnerHTML`/`innerHTML` ausentes nas telas novas); upload/validação antigos intactos (magic bytes, 10 MB, Pillow, tetos, allowlists).
+- **V6:** login criança com 5/min + lockout 10/15 min e `Retry-After`; global 300/min, demais limits intactos; `GET /v1/child/homeworks` paginado no SQL (limit 100 + count); export tetado; beat/polling inalterados; ressalva A5 registrada acima.
+- **Regressão 2ª/3ª rodada:** A1 (teto 20k + threadpool), A2 (`concluir:` escopado, bloco único), A4 (paginação SQL), O1 (`_select_sender` + `coalesce`/`max_instances=1`), backdoor `test_bytes_b64` sob `ALLOW_TEST_BYTES`, `ProxyHeadersMiddleware`, `USER app` nos Dockerfiles, `ENV`/`LIVE_SEND`/`POLLING` — tudo verificado e mantido.
+- **Infra local:** só `3100`/`8081` no host (nossos); postgres/redis/minio sem porta publicada; containers não-root.
+
+---
+
 # Auditoria de Segurança — Hora da Tarefa (VPS, 3ª rodada + adendos v1.4/v1.6)
 
 - Adendo 2026-09-29 (v1.6, sem nova rodada): (a) bug funcional de fuso corrigido — atraso agora compara data em SP (`_sp_day`/`_sp_iso`) e o KPI conta pelo vencimento real (SPECS §4.6; sem impacto de segurança); (b) incidente operacional na VPS local resolvido sem perda — `api` em loop por `DuplicateTable` (`init_db`/`create_all` × alembic, versão travada em `0007` com tabela já existente), sanado com backup + `stamp 0009` + `upgrade head` (`0010–0012` aditivas; runbook em `docs/GO-LIVE.md` §5) — reforça nunca expor `POSTGRES_PASSWORD` divergente e manter alembic como único gestor de schema em prod; (c) docs sincronizadas (modelo `muse-spark`, 160 testes). Nenhum achado novo de segurança.
