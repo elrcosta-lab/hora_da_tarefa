@@ -225,10 +225,10 @@ def test_due_inferred_from_next_class():
         {"weekday": 0, "start_time": "07:30", "end_time": "08:20", "subject": "MATEMATICA ELOISA"},
         {"weekday": 2, "start_time": "07:30", "end_time": "08:20", "subject": "Matemática"},
     ], replace=True)
-    # terça 22/09 → próxima Matemática é qua 23/09 23:59
+    # terça 22/09 → próxima Matemática é qua 23/09 no INÍCIO da aula (07:30)
     due = infer_due_from_grade(child["id"], "Matemática",
                                now=datetime(2026, 9, 22, 10, 0, tzinfo=ZoneInfo("America/Sao_Paulo")))
-    assert due is not None and due.isoformat()[:10] == "2026-09-23" and due.hour == 23
+    assert due is not None and due.isoformat()[:10] == "2026-09-23" and (due.hour, due.minute) == (7, 30)
     assert infer_due_from_grade(child["id"], "Robótica") is None
     assert infer_due_from_grade(child["id"], None) is None
 
@@ -249,18 +249,18 @@ def test_due_skips_class_already_started_today():
         {"weekday": 3, "start_time": "13:00", "end_time": "13:40", "subject": "Matemática"},
         {"weekday": 0, "start_time": "15:00", "end_time": "15:40", "subject": "Matemática"},
     ], replace=True)
-    # qui 24/09 15:15, aula de hoje já terminou → seg 28/09 23:59
+    # qui 24/09 15:15, aula de hoje já terminou → seg 28/09 no início (15:00)
     due = infer_due_from_grade(child["id"], "Matemática",
                                now=datetime(2026, 9, 24, 15, 15, tzinfo=ZoneInfo("America/Sao_Paulo")))
-    assert due is not None and due.isoformat()[:10] == "2026-09-28" and due.hour == 23
+    assert due is not None and due.isoformat()[:10] == "2026-09-28" and (due.hour, due.minute) == (15, 0)
     # qui 24/09 13:15, aula EM ANDAMENTO → também pula para seg 28/09
     due2 = infer_due_from_grade(child["id"], "Matemática",
                                 now=datetime(2026, 9, 24, 13, 15, tzinfo=ZoneInfo("America/Sao_Paulo")))
     assert due2 is not None and due2.isoformat()[:10] == "2026-09-28"
-    # qui 24/09 08:00, aula de hoje ainda nem começou → hoje 23:59 vale
+    # qui 24/09 08:00, aula de hoje ainda nem começou → hoje no início (13:00)
     due3 = infer_due_from_grade(child["id"], "Matemática",
                                 now=datetime(2026, 9, 24, 8, 0, tzinfo=ZoneInfo("America/Sao_Paulo")))
-    assert due3 is not None and due3.isoformat()[:10] == "2026-09-24"
+    assert due3 is not None and due3.isoformat()[:10] == "2026-09-24" and (due3.hour, due3.minute) == (13, 0)
 
 
 def test_extraction_without_date_uses_grade_inference():
@@ -433,3 +433,63 @@ def test_engine_prefers_parent_available_slots():
     s1 = suggest_slots(hw, now=now, limit=5, availability=avail)
     assert s1 and s1[0]["start_at"].hour == 19  # bônus do responsável vira o jogo
     assert "responsável disponível" in s1[0]["reason"]
+
+
+def test_due_snapped_to_class_time():
+    """Data explícita da foto cai no INÍCIO da aula da matéria naquele dia."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from app.tasks.extract import snap_due_to_grade
+    from app.tasks import routine as R
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    child = R.create_child("Snap")
+    R.save_schedules(child["id"], [
+        {"weekday": 2, "start_time": "15:00", "end_time": "15:40", "subject": "Matemática"},
+        {"weekday": 2, "start_time": "13:00", "end_time": "13:40", "subject": "Matemática"},
+    ], replace=True)
+    # qua 23/09 tem Matemática 13:00 e 15:00 → pega a mais cedo
+    due = snap_due_to_grade(child["id"], "Matemática", datetime(2026, 9, 23, 23, 59, tzinfo=tz))
+    assert due is not None and (due.hour, due.minute) == (13, 0) and due.isoformat()[:10] == "2026-09-23"
+    # ISO string também vale
+    due_iso = snap_due_to_grade(child["id"], "Matemática", "2026-09-23T23:59:00-03:00")
+    assert due_iso is not None and (due_iso.hour, due_iso.minute) == (13, 0)
+    # qui 24/09 sem Matemática → mantém 23:59
+    due2 = snap_due_to_grade(child["id"], "Matemática", datetime(2026, 9, 24, 23, 59, tzinfo=tz))
+    assert due2 is not None and (due2.hour, due2.minute) == (23, 59)
+    # matéria genérica/ausente → inalterado
+    assert snap_due_to_grade(child["id"], "Outro", datetime(2026, 9, 23, 23, 59, tzinfo=tz)).hour == 23
+    assert snap_due_to_grade(child["id"], None, datetime(2026, 9, 23, 23, 59, tzinfo=tz)).hour == 23
+    assert snap_due_to_grade(child["id"], "Matemática", None) is None
+
+
+def test_apply_result_snaps_explicit_due():
+    """Fim a fim (sem LLM): _apply_result ajusta a data da foto p/ o horário da grade."""
+    from datetime import datetime, timedelta
+    from zoneinfo import ZoneInfo
+
+    from app.models import Homework
+    from app.schemas.extraction import ExtractionResult
+    from app.tasks.extract import _apply_result
+    from app.tasks import routine as R
+
+    tz = ZoneInfo("America/Sao_Paulo")
+    child = R.create_child("Applier")
+    R.save_schedules(child["id"], [
+        {"weekday": 0, "start_time": "13:00", "end_time": "13:40", "subject": "Português"},
+    ], replace=True)
+    # próxima segunda futura (evita a rejeição de data passada do _apply_result)
+    today = datetime.now(tz).date()
+    coming = today + timedelta(days=(7 - today.weekday()) % 7 or 7)
+    hw = Homework(id="x", child_id=child["id"])
+    res = ExtractionResult(
+        is_homework=True, subject="Português", title="Estudo de texto",
+        statement="Ler o texto.", due_at=coming.isoformat(), estimated_minutes=30,
+        priority=1, confidence=0.9, needs_review=False, extraction_status="ok",
+        meta={"engine": "t", "provider": "t"},
+    )
+    _apply_result(hw, res, infer=True)
+    # segunda tem Português 13:00 → entrega 13:00 (não mais 23:59)
+    assert hw.due_at is not None and hw.due_at.isoformat()[:10] == coming.isoformat()
+    assert (hw.due_at.hour, hw.due_at.minute) == (13, 0)

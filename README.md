@@ -2,7 +2,7 @@
 
 SaaS que organiza a lição de casa dos filhos de ponta a ponta: o responsável envia a **foto da tarefa** (app web ou Telegram), a IA extrai matéria/prazo/enunciado, o motor sugere o melhor horário livre (grade + atividades + sono) e o bot lembra e cobra a conclusão.
 
-> **Status:** beta na VPS · **Versão docs:** 1.8 (2026-10-04) · **Docs:** [PRD](PRD.md) (produto) · [SPECS](SPECS.md) (técnica) · [Go-Live](docs/GO-LIVE.md) (runbook) · [Auditoria](AUDITORIA.md) (segurança) · [Telas](design/SCREENS.md) (Stitch)
+> **Status:** beta na VPS · **Versão docs:** 1.9 (2026-10-04) · **Docs:** [PRD](PRD.md) (produto) · [SPECS](SPECS.md) (técnica) · [Go-Live](docs/GO-LIVE.md) (runbook) · [Auditoria](AUDITORIA.md) (segurança) · [Telas](design/SCREENS.md) (Stitch)
 
 ## Stack
 

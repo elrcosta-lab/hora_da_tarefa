@@ -1,7 +1,7 @@
 # SPECS — Hora da Tarefa (SDD)
 
 > Documento de Especificação Técnica (Spec-Driven Development).
-> Autor: subagente SPEC + OpenCode · Versão: 1.8 (RF-25 + fixes UX + auditoria A5–A7) · Status: **Aprovada para o beta**
+> Autor: subagente SPEC + OpenCode · Versão: 1.9 (prazo no horário da grade) · Status: **Aprovada para o beta**
 > Escopo: MVP em VPS única (1 vCPU, 4 GB RAM, 50 GB disco) com Docker Compose + IA via OpenRouter (`meta/muse-spark-1.3-contributor`; nex delistado em 24-25/09/2026) + bot em polling.
 > Última atualização: 2026-09-29.
 > Autoridade: esta spec define o comportamento esperado. Código que altere comportamento sem atualização desta spec no mesmo commit é inválido.
@@ -865,7 +865,7 @@ flowchart LR
 
 **E3. Validação** (Pydantic `ExtractionResult`)
 - `subject` deve estar em taxonomia conhecida; senão `"Outro"`.
-- `due_at`: parser de datas pt-BR ("sexta", "25/09", "amanhã"); se só dia → 23:59 local; se passado → próximo ciclo válido.
+- `due_at`: parser de datas pt-BR ("sexta", "25/09", "amanhã"); se só dia → horário da aula da matéria nesse dia (início; fallback 23:59 sem aula casando); se passado → próximo ciclo válido.
 - `statement` máx 4000 chars; trunca e marca `needs_review=true`.
 - `confidence` vem do modelo (0–1); `needs_review` = `confidence<0.75` ou críticos nulos.
 - `is_homework=false` com conf ≥0.8 → descarta com aviso.
@@ -1005,8 +1005,11 @@ página) gera **N Homeworks** (1 por matéria), não só o primeiro. Protocolo:
 2. **Próxima aula da matéria** — sem data visível, `infer_due_from_grade` usa a
    grade importada (match taxonômico insensível a acento/maiúsculas e a
    "matéria + professor" grudados, ex. `MATEMATICA ELOISA` → `Matemática`;
-   genéricos `Aula`/`Outro` nunca casam): próxima ocorrência em 14 dias → 23:59,
+   genéricos `Aula`/`Outro` nunca casam): próxima ocorrência em 14 dias →
+   **início da aula** (fallback 23:59 sem aula casando),
    sempre com `needs_review=true` (`meta.due_inferred_from=grade`).
+   Data explícita da foto também é ajustada p/ o início da aula da matéria
+   naquele dia (`snap_due_to_grade`; sem aula casando, mantém 23:59).
    **Aula de hoje só conta se ainda não começou** (bug 2026-09-24: "para casa"
    dado à tarde com aula 13:00 inferia entrega hoje; é sempre p/ próxima aula).
 3. **Sem grade/match** — `due_at` null, horizonte +7d e revisão manual.
@@ -1542,3 +1545,5 @@ Implementação: `slowapi`/Redis token bucket. Resposta `429` com `Retry-After`.
 > Correções pós-auditoria 4ª rodada: **A5** — `code_lookup` HMAC-SHA256 indexado (migração `0014`, login O(1) + fallback legado); **A6** — TTL da sessão criança 720→120 min + expiração client-side; **A7** — lockout só p/ código bem-formado + reset em sucesso.
 >
 > v1.8 (2026-10-04): RF-25 fixes de UX (código exibido após gerar; fallback de cópia sem clipboard API p/ HTTP; `/crianca/tarefas` oculta `concluída` — só apresentação, API inalterada); auditoria 4ª rodada com A5–A7 verificados; deploy VPS com `0013`–`0014`; testes 182 (28 arquivos).
+>
+> v1.9 (2026-10-04): prazo da tarefa no **início** da aula da matéria — `infer_due_from_grade` retorna o start da próxima aula (não mais 23:59) e data explícita da foto é ajustada por `snap_due_to_grade` (fallback 23:59 sem aula casando); testes da inferência atualizados + 2 novos.

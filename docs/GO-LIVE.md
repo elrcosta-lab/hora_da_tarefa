@@ -1,4 +1,4 @@
-# Runbook de Go-Live (beta) — Hora da Tarefa (v1.8, 2026-10-04)
+# Runbook de Go-Live (beta) — Hora da Tarefa (v1.9, 2026-10-04)
 
 > **Regra de ouro: nenhum segredo entra no git.** `OPENROUTER_API_KEY`,
 > `TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `POSTGRES_PASSWORD`,

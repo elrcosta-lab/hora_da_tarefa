@@ -306,11 +306,72 @@ def _parse_result_due(due_str: str | None):
         return None
 
 
-def infer_due_from_grade(child_id: str, subject: str | None, now=None):
-    """Próxima aula da matéria → entrega 23:59 (item c). None sem grade/match.
+def _matching_class_starts(child_id: str, want_n: str, weekday: int) -> list[int]:
+    """Inícios de aula (minutos) da matéria no dia da semana, ordenados. [] sem match."""
+    from app.services.textnorm import normalize_subject
+    from app.tasks import routine as _R
 
-    Ordem de resolução da entrega: 1) data do professor na foto, 2) esta
-    inferência, 3) null (horizonte +7d + revisão manual).
+    starts = []
+    for s in _R.list_schedules(child_id):
+        if int(s.get("weekday", -1)) != weekday:
+            continue
+        if normalize_subject(s.get("subject") or "")[0] != want_n:
+            continue
+        try:
+            h, m = str(s.get("start_time") or "").split(":")[:2]
+            starts.append(int(h) * 60 + int(m))
+        except (ValueError, AttributeError):
+            continue
+    return sorted(starts)
+
+
+def _want_subject(subject: str | None) -> str | None:
+    """Matéria normalizada p/ match na grade. None se genérica/ausente."""
+    from app.services.textnorm import normalize_subject
+
+    if not subject:
+        return None
+    want, _ = normalize_subject(subject)
+    if want in ("Outro", "Aula"):
+        return None
+    return normalize_subject(want)[0]
+
+
+def snap_due_to_grade(child_id: str, subject: str | None, due) -> object:
+    """Ajusta data explícita p/ o início da aula da matéria naquele dia (SP).
+
+    Sem aula casando (ou sem matéria/grade), devolve `due` inalterado
+    (fallback 23:59 preservado). `due` aceita datetime ou ISO.
+    """
+    from datetime import datetime as _dt
+    from zoneinfo import ZoneInfo
+
+    if due is None:
+        return None
+    want_n = _want_subject(subject)
+    if want_n is None:
+        return due
+    try:
+        dt = _dt.fromisoformat(str(due)) if not isinstance(due, datetime) else due
+    except Exception:
+        return due
+    tz = ZoneInfo("America/Sao_Paulo")
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=tz)
+    else:
+        dt = dt.astimezone(tz)
+    starts = _matching_class_starts(child_id, want_n, dt.date().weekday())
+    if not starts:
+        return due
+    h, m = divmod(starts[0], 60)
+    return dt.replace(hour=h, minute=m, second=0, microsecond=0)
+
+
+def infer_due_from_grade(child_id: str, subject: str | None, now=None):
+    """Próxima aula da matéria → início da aula (fallback 23:59 sem match — nunca ocorre aqui).
+
+    Ordem de resolução da entrega: 1) data do professor na foto (ajustada por
+    `snap_due_to_grade`), 2) esta inferência, 3) null (horizonte +7d + revisão manual).
 
     Aula de HOJE só conta se ainda não começou (bug 2026-09-24: foto 15:15
     com aula 13:00-13:40 inferia entrega hoje; 'para casa' é sempre p/ a
@@ -320,38 +381,23 @@ def infer_due_from_grade(child_id: str, subject: str | None, now=None):
     from datetime import timedelta as _td
     from zoneinfo import ZoneInfo
 
-    from app.services.textnorm import normalize_subject
-    from app.tasks import routine as _R
-
-    if not subject:
-        return None
-    want, _ = normalize_subject(subject)
-    if want in ("Outro", "Aula"):
+    want_n = _want_subject(subject)
+    if want_n is None:
         return None
     now = now or _dt.now(ZoneInfo("America/Sao_Paulo"))
     if now.tzinfo is None:
         now = now.replace(tzinfo=ZoneInfo("America/Sao_Paulo"))
-    want_n = normalize_subject(want)[0]
     now_hm = now.hour * 60 + now.minute
-
-    def _already_started(start_s: str | None) -> bool:
-        try:
-            h, m = str(start_s or "").split(":")[:2]
-            return now_hm >= int(h) * 60 + int(m)
-        except (ValueError, AttributeError):
-            return False
 
     for delta in range(14):
         day = (now + _td(days=delta)).date()
-        wd = day.weekday()
-        for s in _R.list_schedules(child_id):
-            if int(s.get("weekday", -1)) != wd:
-                continue
-            if normalize_subject(s.get("subject") or "")[0] == want_n:
-                if delta == 0 and _already_started(s.get("start_time")):
-                    continue
-                return _dt(day.year, day.month, day.day, 23, 59,
-                           tzinfo=ZoneInfo("America/Sao_Paulo"))
+        starts = [s for s in _matching_class_starts(child_id, want_n, day.weekday())
+                  if delta != 0 or s > now_hm]
+        if not starts:
+            continue
+        h, m = divmod(starts[0], 60)
+        return _dt(day.year, day.month, day.day, h, m,
+                   tzinfo=ZoneInfo("America/Sao_Paulo"))
     return None
 
 
@@ -360,7 +406,7 @@ def _apply_result(hw, result, infer: bool = True):
     hw.subject = result.subject
     hw.title = result.title
     hw.statement = result.statement
-    hw.due_at = _parse_result_due(result.due_at)
+    hw.due_at = snap_due_to_grade(hw.child_id, hw.subject, _parse_result_due(result.due_at))
     hw.estimated_minutes = result.estimated_minutes
     hw.priority = result.priority
     hw.extraction_confidence = result.confidence

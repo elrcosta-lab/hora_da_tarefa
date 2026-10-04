@@ -1,7 +1,7 @@
 # PRD — Hora da Tarefa
 
 > **Status:** Beta (VPS)
-> **Versão:** 1.8 (RF-25 fixes: exibir código, fallback de cópia, ocultar concluídas)
+> **Versão:** 1.9 (prazo da tarefa no horário da grade)
 > **Última atualização:** 2026-10-04
 > **Responsável:** Product Owner (a definir)
 > **Classificação:** Documento de requisitos de produto (PRD)
@@ -692,6 +692,7 @@ sequenceDiagram
 | 1.6 | 2026-09-29 | OpenCode | Atraso em data-SP (fuso corrigido no beat/`today`/API) + KPI de atrasadas pelo vencimento real; runbook de recuperação de versionamento (stamp) |
 | 1.7 | 2026-10-04 | OpenCode | RF-25: acesso da criança por código de 8 chars Crockford (~40 bits, Argon2id, revogável) em `/crianca`, visualização somente leitura de todas as tarefas, token JWT isolado `type="child_access"` (sessão 2h), rate limit estrito; persona/jornada de Miguel atualizadas; correções pós-auditoria (lookup HMAC O(1), TTL 120 min, lockout justo) |
 | 1.8 | 2026-10-04 | OpenCode | RF-25 fixes de UX: código exibido após gerar (ordem `loadAccess`→`setShownCode`), fallback de cópia sem clipboard API (HTTP), `/crianca/tarefas` oculta `concluída`; auditoria 4ª rodada com A5–A7 corrigidos; deploy VPS (migrações `0013`–`0014`) |
+| 1.9 | 2026-10-04 | OpenCode | Prazo da tarefa no horário da grade: data explícita e inferência caem no **início** da aula da matéria (fallback 23:59 sem aula casando) — fim do "Entrega 23:59" padrão |
 
 ---
 
